@@ -12,6 +12,8 @@ COMPRESSION_METHOD_DEFLATE = 8
 
 ZEROES = b"\x00" * 1024
 def crc32_zeroes(n):
+    # TODO: crc32_combine https://github.com/madler/zlib/blob/master/crc32.c
+    # https://stackoverflow.com/a/23126768
     crc = 0
     while n > len(ZEROES):
         crc = zlib.crc32(ZEROES, crc)
