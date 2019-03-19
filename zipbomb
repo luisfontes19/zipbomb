@@ -21,10 +21,11 @@ def crc32_zeroes(n):
 # Return a block of data whose compressed size is as specified. Returns a tuple
 # (compression_method, compressed_data, uncompressed_size, crc).
 def get_compressed(compressed_size):
-    compressed_data = b"\x00" * compressed_size
-    uncompressed_size = len(compressed_data)
+    uncompressed_size = compressed_size - 5
+    header = struct.pack("<BHH", 0x01, uncompressed_size, uncompressed_size ^ 0xffff) # BFINAL=1, BTYPE=00
+    compressed_data = header + b"\x00" * uncompressed_size
     assert len(compressed_data) == compressed_size
-    return COMPRESSION_METHOD_STORE, compressed_data, uncompressed_size, crc32_zeroes(uncompressed_size)
+    return COMPRESSION_METHOD_DEFLATE, compressed_data, uncompressed_size, crc32_zeroes(uncompressed_size)
 
 def write_local_file_header(f, compression_method, compressed_size, uncompressed_size, crc, filename):
     # APPNOTE.TXT 4.3.7
@@ -90,11 +91,17 @@ def do_it(f):
 
     offset = 0
     file_header_0_offset = offset
+    offset += write_local_file_header(f, COMPRESSION_METHOD_DEFLATE, 5 + 32 + len(compressed_data), 32 + uncompressed_size, 0, b"BB")
+    offset += f.write(struct.pack("<BHH", 0x00, 32, 32 ^ 0xffff)) # BFINAL=0, BTYPE=00
+
+    file_header_real_offset = offset
     offset += write_local_file_header(f, compression_method, len(compressed_data), uncompressed_size, crc, b"AA")
     offset += f.write(compressed_data)
+
     cd_offset = offset
-    offset += write_central_directory_header(f, file_header_0_offset, compression_method, len(compressed_data), uncompressed_size, crc, b"AA")
+    offset += write_central_directory_header(f, file_header_0_offset, COMPRESSION_METHOD_DEFLATE, 5 + 32 + len(compressed_data), 32 + uncompressed_size, 0, b"BB")
+    offset += write_central_directory_header(f, file_header_real_offset, compression_method, len(compressed_data), uncompressed_size, crc, b"AA")
     cd_size = offset - cd_offset
-    offset += write_eocd(f, 1, cd_offset, cd_size)
+    offset += write_eocd(f, 2, cd_offset, cd_size)
 
 do_it(sys.stdout.buffer)
