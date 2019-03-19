@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+
+import struct
+import sys
+import zlib
+
+# APPNOTE.TXT 4.4.5
+# 0 - The file is stored (no compression)
+COMPRESSION_METHOD_STORE = 0
+# 8 - The file is Deflated
+COMPRESSION_METHOD_DEFLATE = 8
+
+ZEROES = b"\x00" * 1024
+def crc32_zeroes(n):
+    crc = 0
+    while n > len(ZEROES):
+        crc = zlib.crc32(ZEROES, crc)
+        n -= len(ZEROES)
+    return zlib.crc32(ZEROES[:n], crc)
+
+# Return a block of data whose compressed size is as specified. Returns a tuple
+# (compression_method, compressed_data, uncompressed_size, crc).
+def get_compressed(compressed_size):
+    compressed_data = b"\x00" * compressed_size
+    uncompressed_size = len(compressed_data)
+    assert len(compressed_data) == compressed_size
+    return COMPRESSION_METHOD_STORE, compressed_data, uncompressed_size, crc32_zeroes(uncompressed_size)
+
+def write_local_file_header(f, compression_method, compressed_size, uncompressed_size, crc, filename):
+    # APPNOTE.TXT 4.3.7
+    header = struct.pack("<LHHHHHLLLHH",
+        0x04034b50, # signature
+        20,         # zip version 2.0
+        0,          # flags
+        compression_method, # compression method
+        0,          # modification date
+        0,          # modification time
+        crc,        # CRC-32
+        compressed_size,    # compressed size
+        uncompressed_size,  # uncompressed size
+        len(filename),      # filename length
+        0,          # extra length
+    )
+    f.write(header)
+    f.write(filename)
+    return len(header) + len(filename)
+
+def write_central_directory_header(f, file_offset, compression_method, compressed_size, uncompressed_size, crc, filename):
+    # APPNOTE.TXT 4.3.12
+    header = struct.pack("<LHHHHHHLLLHHHHHLL",
+        0x02014b50, # signature
+        20,         # version made by
+        0,          # version needed to extract
+        0,          # flags
+        compression_method, # compression method
+        0,          # modification date
+        0,          # modification time
+        crc,        # CRC-32
+        compressed_size,    # compressed size
+        uncompressed_size,  # uncompressed size
+        len(filename),      # filename length
+        0,          # extra length
+        0,          # file comment length
+        0,          # disk number where file starts
+        0,          # internal file attributes
+        0,          # external file attributes
+        file_offset,        # offset of local file header
+    )
+    f.write(header)
+    f.write(filename)
+    return len(header) + len(filename)
+
+def write_eocd(f, cd_num_entries, cd_offset, cd_size):
+    # APPNOTE.TXT 4.3.16
+    header = struct.pack("<LHHHHLLH",
+        0x06054b50, # signature
+        0,          # number of this disk
+        0,          # disk of central directory
+        cd_num_entries, # number of central directory entries on this disk
+        cd_num_entries, # number of central directory entries total
+        cd_size,    # size of central directory
+        cd_offset,  # offset of central directory
+        0,          # comment length
+    )
+    f.write(header)
+    return len(header)
+
+def do_it(f):
+    compression_method, compressed_data, uncompressed_size, crc = get_compressed(1025)
+
+    offset = 0
+    file_header_0_offset = offset
+    offset += write_local_file_header(f, compression_method, len(compressed_data), uncompressed_size, crc, b"AA")
+    offset += f.write(compressed_data)
+    cd_offset = offset
+    offset += write_central_directory_header(f, file_header_0_offset, compression_method, len(compressed_data), uncompressed_size, crc, b"AA")
+    cd_size = offset - cd_offset
+    offset += write_eocd(f, 1, cd_offset, cd_size)
+
+do_it(sys.stdout.buffer)
