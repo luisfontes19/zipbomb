@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 
+import sys
 import zlib
 
 POLY = 0xedb88320
+POLYLONG = (POLY<<1)|1
+print(hex(POLYLONG))
 
 def crc32_1bit(bit, init=0):
+    init &= 0xffffffff
     init ^= bit
-    # init = init & 0xffffffff
     if init & 1 == 1:
         return (init >> 1) ^ POLY
     else:
@@ -18,16 +21,20 @@ def crc32(data, init=0):
 def crc32_combine_1(crc1, crc2, len2):
     return crc32(b"\x00" * len2, crc1) ^ crc2
 
-def identity_matrix():
-    return [1<<shift for shift in range(33)]
-
 X = 1<<32
 
 def compute_zero_operator_matrix():
-    return [crc32_1bit(0, 1<<shift) for shift in range(33)]
+    m = [crc32_1bit(0, (1<<shift)&0xffffffff) for shift in range(33)]
+    m[32] |= X
+    return m
 
 def compute_one_operator_matrix():
-    return [crc32_1bit(1, 1<<shift) for shift in range(33)]
+    m = [crc32_1bit(1, (1<<shift)&0xffffffff) for shift in range(33)]
+    m[32] |= X
+    return m
+
+def identity_matrix():
+    return [1<<shift for shift in range(33)]
 
 def compute_single_byte_operator_matrix(b):
     factors = [compute_zero_operator_matrix(), compute_one_operator_matrix()]
@@ -37,9 +44,13 @@ def compute_single_byte_operator_matrix(b):
     return m
 
 def matrix_mul_vector(m, v):
+    v |= X
+#    v &= 0xffffffff
+#    if v == 0:
+#        v = X
     r = 0
     for shift in range(len(m)):
-        if (v>>shift) & 1:
+        if (v>>shift) & 1 == 1:
             r ^= m[shift]
     return r
 
@@ -49,31 +60,12 @@ def matrix_mul(a, b):
 def matrix_square(m):
     return matrix_mul(m, m)
 
-print("{:08x}".format(int("".join(reversed("10100010001001110010000010101010")), 2)))
-print("{:08x}".format(crc32_1bit(0, 1)))
-print("{:08x}".format(crc32_1bit(1, 1)))
-print("{:08x}".format(crc32(b"\x00\x00\x00\x01")))
-print("{:08x}".format(crc32(b"\x01")))
-print("{:08x}".format(int("".join(reversed("011010010000110011100000111011100")), 2)))
-print("{:08x}".format(crc32(b"\x01\x00")))
-print("{:08x}".format(int("".join(reversed("100000101000110011011000100110000")), 2)))
-print("{:08x}".format(crc32(b"\x01\x00\x00\x00")))
-print("{:08x}".format(int("".join(reversed("110100010001001110010000010101010")), 2)))
-
-print()
-
-print("{:08x}".format(crc32(b"\x00" * 100)))
-print("{:08x}".format(crc32(b"\x01" + b"\x00" * 100)))
-print("{:08x}".format(crc32_combine_1(crc32(b"\x01"), crc32(b"\x00" * 100), 100)))
-
-print()
-
 def print_matrix(m):
     print("[", end="")
     for n, row in enumerate(m):
         if n != 0:
             print(" ", end="")
-        print("{:08x}".format(row), end="")
+        print("{:09x}".format(row), end="")
         if n != len(m)-1:
             print()
     print("]")
@@ -81,26 +73,66 @@ def print_matrix(m):
 print()
 m0 = compute_zero_operator_matrix()
 print_matrix(m0)
-print("{:08x}".format(matrix_mul_vector(m0, 123)))
-print("{:08x}".format(crc32_1bit(0, 123)))
+print("{:09x}".format(matrix_mul_vector(m0, 123)))
+print("{:09x}".format(crc32_1bit(0, 123)))
+print("{:09x}".format(matrix_mul_vector(matrix_square(m0), 123)))
+print("{:09x}".format(crc32_1bit(0, crc32_1bit(0, 123))))
+print("{:09x}".format(matrix_mul_vector(matrix_square(matrix_square(m0)), 123)))
+print("{:09x}".format(crc32_1bit(0, crc32_1bit(0, crc32_1bit(0, crc32_1bit(0, 123))))))
 
 print()
 m1 = compute_one_operator_matrix()
 print_matrix(m1)
-print("{:08x}".format(matrix_mul_vector(m1, 0)))
-print("{:08x}".format(matrix_mul_vector(m1, X+0)))
-print("{:08x}".format(crc32_1bit(1, 0)))
-print("{:08x}".format(matrix_mul_vector(matrix_square(m1), X+0)))
-print("{:08x}".format(crc32_1bit(1, crc32_1bit(1, 0))))
-print("{:08x}".format(matrix_mul_vector(matrix_square(matrix_square(m1)), X+0)))
-print("{:08x}".format(crc32_1bit(1, crc32_1bit(1, crc32_1bit(1, crc32_1bit(1, 0))))))
+print("{:09x}".format(matrix_mul_vector(m1, X)))
+print("{:09x}".format(crc32_1bit(1, 0)))
+print("{:09x}".format(matrix_mul_vector(matrix_square(m1), X)))
+print("{:09x}".format(crc32_1bit(1, crc32_1bit(1, 0))))
+print("{:09x}".format(matrix_mul_vector(matrix_square(matrix_square(m1)), X)))
+print("{:09x}".format(crc32_1bit(1, crc32_1bit(1, crc32_1bit(1, crc32_1bit(1, 0))))))
 
 print()
-print("{:08x}".format(matrix_mul_vector(matrix_square(matrix_square(matrix_square(m0))), X+1)))
-print("{:08x}".format(crc32(b"\x00", 1)))
+print("{:09x}".format(matrix_mul_vector(matrix_square(matrix_square(matrix_square(m0))), X//2)))
+print("{:09x}".format(crc32(b"\x00", X//2)))
+
 print()
-print("{:08x}".format(matrix_mul_vector(matrix_square(matrix_square(matrix_square(m1))), X)))
-print("{:08x}".format(crc32(b"\xff", 0)))
+print("{:09x}".format(matrix_mul_vector(m0, X+1)))
+print("{:09x}".format(crc32(b"\x80", 0)))
+print("{:09x}".format(matrix_mul_vector(matrix_square(m0), X+1)))
+print("{:09x}".format(crc32(b"\x40", 0)))
+print("{:09x}".format(matrix_mul_vector(matrix_square(matrix_square(m0)), X+1)))
+print("{:09x}".format(crc32(b"\x10", 0)))
+print("{:09x}".format(matrix_mul_vector(matrix_square(matrix_square(matrix_square(m0))), X+1)))
+print("{:09x}".format(crc32(b"\x01", 0)))
+print("{:09x}".format(matrix_mul_vector(matrix_square(matrix_square(matrix_square(matrix_square(m0)))), X+1)))
+print("{:09x}".format(crc32(b"\x01\x00", 0)))
+print("{:09x}".format(matrix_mul_vector(matrix_square(matrix_square(matrix_square(matrix_square(matrix_square(m0))))), X+1)))
+print("{:09x}".format(crc32(b"\x01\x00\x00\x00", 0)))
+
+print()
+print("{:09x}".format(matrix_mul_vector(m1, X)))
+print("{:09x}".format(crc32(b"\x80", 0)))
+print("{:09x}".format(matrix_mul_vector(matrix_square(m1), X)))
+print("{:09x}".format(crc32(b"\xc0", 0)))
+print("{:09x}".format(matrix_mul_vector(matrix_square(matrix_square(m1)), X)))
+print("{:09x}".format(crc32(b"\xf0", 0)))
+# print("{:09x}".format(matrix_mul_vector(matrix_mul(m1, matrix_square(matrix_square(m1))), X)))
+# print("{:09x}".format(crc32(b"\xf8", 0)))
+# print("{:09x}".format(matrix_mul_vector(matrix_mul(m1, matrix_mul(m1, matrix_square(matrix_square(m1)))), X)))
+# print("{:09x}".format(crc32(b"\xfc", 0)))
+# print("{:09x}".format(matrix_mul_vector(matrix_mul(m1, matrix_mul(m1, matrix_mul(m1, matrix_square(matrix_square(m1))))), X)))
+# print("{:09x}".format(crc32(b"\xfe", 0)))
+# print("{:09x}".format(matrix_mul_vector(matrix_mul(m1, matrix_mul(m1, matrix_mul(m1, matrix_mul(m1, matrix_square(matrix_square(m1)))))), X)))
+# print("{:09x}".format(crc32(b"\xff", 0)))
+print("{:09x}".format(matrix_mul_vector(matrix_square(matrix_square(matrix_square(m1))), X)))
+print("{:09x}".format(crc32(b"\xff", 0)))
+print("{:09x}".format(matrix_mul_vector(matrix_square(matrix_square(matrix_square(matrix_square(m1)))), X)))
+print("{:09x}".format(crc32(b"\xff\xff", 0)))
+print("{:09x}".format(matrix_mul_vector(matrix_square(matrix_square(matrix_square(matrix_square(matrix_square(m1))))), X)))
+print("{:09x}".format(crc32(b"\xff\xff\xff\xff", 0)))
+
+print()
+print_matrix(matrix_mul(m1, matrix_mul(m1, matrix_mul(m1, matrix_square(matrix_square(m1))))))
+print_matrix(matrix_mul(m1, matrix_mul(m1, matrix_mul(m1, matrix_mul(m1, matrix_square(matrix_square(m1)))))))
 
 # print()
 # M0 = matrix_square(matrix_square(matrix_square(m0)))
