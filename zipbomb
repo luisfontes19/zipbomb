@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import binascii
 import struct
 import sys
 
@@ -45,7 +46,7 @@ def precompute_crc_matrix(data):
 
 def precompute_crc_matrix_repeated(data, n):
     accum = precompute_crc_matrix(data)
-    # Square-and-multiple algorithm to compute m = accum^n.
+    # Square-and-multiply algorithm to compute m = accum^n.
     m = identity_matrix()
     while n > 0:
         if n & 1 == 1:
@@ -326,12 +327,12 @@ def write_zip_full_reuse(f, compressed_size, num_copies):
 
     return offset
 
-class FileRecord:
-    def __init__(self, header, data):
-        self.header = header
-        self.data = data
-
 def write_zip_quoted_reuse(f, compressed_size, num_additional):
+    class FileRecord:
+        def __init__(self, header, data):
+            self.header = header
+            self.data = data
+
     # We build the file table backwards on a stack, starting with the file that
     # actually contains the bulk of the compressed data.
     files = []
@@ -339,16 +340,29 @@ def write_zip_quoted_reuse(f, compressed_size, num_additional):
     header = LocalFileHeader(len(compressed_data), uncompressed_size, crc_matrix_apply(crc_matrix), gen_filename())
     files.append(FileRecord(header, compressed_data))
 
+    crc_matrix = precompute_crc_matrix_repeated(b"\x00", uncompressed_size)
+
     for _ in range(num_additional):
         # The file that will follow this one is the one that has most recently
         # been added to the stack.
         next_file = files[-1]
         next_header_bytes = next_file.header.serialize()
-        # Each new file adds a prefix to the contents of the following file (the
-        # prefix is actually the following file's Local File Header). We compute
-        # the CRC matrix for the prefix and right-multiply it with the running
-        # CRC matrix.
-        crc_matrix = matrix_mul(crc_matrix, precompute_crc_matrix(next_header_bytes))
+
+        # Here we do a crc32_combine operation to compute the CRC of
+        # prefix+remainder, knowing crc32(prefix), crc32(remainder), and a
+        # matrix that computes the effect of len(remainder) 0x00 bytes.
+        # Basically it's the xor of crc32(remainder) and crc32(prefix + zeroes),
+        # where the latter quantity is the result of applying the matrix to
+        # crc32(prefix).
+        crc1 = binascii.crc32(next_header_bytes)
+        crc2 = next_file.header.crc
+        # Undo the pre- and post-conditioning that crc_matrix_apply does,
+        # because crc1 and crc2 are already conditioned.
+        new_crc = crc_matrix_apply(crc_matrix, crc1 ^ 0xffffffff) ^ 0xffffffff ^ crc2
+        # Next file will have an additional len(next_header_bytes) accumulated
+        # in crc_matrix.
+        crc_matrix = matrix_mul(crc_matrix, precompute_crc_matrix_repeated(b"\x00", len(next_header_bytes)))
+
         # Place a non-final non-compressed DEFLATE block (BFINAL=0, BTYPE=00)
         # that quotes the following Local File Header and joins up with the
         # DEFLATE stream that it contains.
@@ -356,7 +370,7 @@ def write_zip_quoted_reuse(f, compressed_size, num_additional):
         header = LocalFileHeader(
             len(quote) + len(next_header_bytes) + next_file.header.compressed_size,
             len(next_header_bytes) + next_file.header.uncompressed_size,
-            crc_matrix_apply(crc_matrix),
+            new_crc,
             gen_filename_update(),
         )
         files.append(FileRecord(header, quote))
