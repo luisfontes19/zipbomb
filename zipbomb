@@ -2,91 +2,188 @@
 
 import struct
 import sys
-import zlib
+
+
+CHOSEN_BYTE = b"A"
+
+
+# CRC-32 precomputation using matrices in GF(2). Similar to crc32_combine in
+# zlib. See https://stackoverflow.com/a/23126768 for a description of the idea.
+# Here, we use a 33-bit state where the dummy 33rd coordinate is always 1
+# (similar to homogeneous coordinates). Matrices are represented as 33-element
+# lists, where each element is a 33-bit integer representing one column.
+
+CRC_POLY = 0xedb88320
+
+def matrix_mul_vector(m, v):
+    r = 0
+    for shift in range(len(m)):
+        if (v>>shift) & 1 == 1:
+            r ^= m[shift]
+    return r
+
+def matrix_mul(a, b):
+    assert len(a) == len(b)
+    return [matrix_mul_vector(a, v) for v in b]
+
+def identity_matrix():
+    return [1<<shift for shift in range(33)]
+
+# Matrix that updates CRC-32 state for a 0 bit.
+CRC_M0 = [CRC_POLY] + [1<<shift for shift in range(31)] + [1<<32]
+# Matrix that flips the LSb (x^31 in the polynomial).
+CRC_MFLIP = [1<<shift for shift in range(32)] + [(1<<32) + 1]
+# Matrix that updates CRC-32 state for a 1 bit: flip the LSb, then act as for a 0 bit.
+CRC_M1 = matrix_mul(CRC_M0, CRC_MFLIP)
+
+def precompute_crc_matrix(data):
+    m = identity_matrix()
+    for b in data:
+        for shift in range(8):
+            m = matrix_mul([CRC_M0, CRC_M1][(b>>shift)&1], m)
+    return m
+
+def precompute_crc_matrix_repeated(data, n):
+    accum = precompute_crc_matrix(data)
+    # Square-and-multiple algorithm to compute m = m_byte^n.
+    m = identity_matrix()
+    while n > 0:
+        if n & 1 == 1:
+            m = matrix_mul(m, accum)
+        accum = matrix_mul(accum, accum)
+        n >>= 1
+    return m
+
+def crc_matrix_apply(m, value=0):
+    return (matrix_mul_vector(m, (value^0xffffffff)|(1<<32)) & 0xffffffff) ^ 0xffffffff
+
 
 # APPNOTE.TXT 4.4.5
-# 0 - The file is stored (no compression)
-COMPRESSION_METHOD_STORE = 0
 # 8 - The file is Deflated
 COMPRESSION_METHOD_DEFLATE = 8
 
-ZEROES = b"\x00" * 1024
-def crc32_zeroes(n):
-    # TODO: crc32_combine https://github.com/madler/zlib/blob/master/crc32.c
-    # https://stackoverflow.com/a/23126768
-    crc = 0
-    while n > len(ZEROES):
-        crc = zlib.crc32(ZEROES, crc)
-        n -= len(ZEROES)
-    return zlib.crc32(ZEROES[:n], crc)
-
 # Return a block of data whose compressed size is as specified. Returns a tuple
-# (compression_method, compressed_data, uncompressed_size, crc).
+# (compressed_data, uncompressed_size, crc_matrix).
 def get_compressed(compressed_size):
     uncompressed_size = compressed_size - 5
     header = struct.pack("<BHH", 0x01, uncompressed_size, uncompressed_size ^ 0xffff) # BFINAL=1, BTYPE=00
-    compressed_data = header + b"\x00" * uncompressed_size
+    compressed_data = header + CHOSEN_BYTE * uncompressed_size
     assert len(compressed_data) == compressed_size
-    return COMPRESSION_METHOD_DEFLATE, compressed_data, uncompressed_size, crc32_zeroes(uncompressed_size)
+    return compressed_data, uncompressed_size, precompute_crc_matrix_repeated(CHOSEN_BYTE, uncompressed_size)
 
-def write_local_file_header(f, compression_method, compressed_size, uncompressed_size, crc, filename):
-    # APPNOTE.TXT 4.3.7
-    header = struct.pack("<LHHHHHLLLHH",
-        0x04034b50, # signature
-        20,         # zip version 2.0
-        0,          # flags
-        compression_method, # compression method
-        0,          # modification date
-        0,          # modification time
-        crc,        # CRC-32
-        compressed_size,    # compressed size
-        uncompressed_size,  # uncompressed size
-        len(filename),      # filename length
-        0,          # extra length
-    )
-    f.write(header)
-    f.write(filename)
-    return len(header) + len(filename)
+class LocalFileHeader:
+    def __init__(self, compressed_size, uncompressed_size, crc, filename):
+        self.compressed_size = compressed_size
+        self.uncompressed_size = uncompressed_size
+        self.crc = crc
+        self.filename = filename
 
-def write_central_directory_header(f, file_offset, compression_method, compressed_size, uncompressed_size, crc, filename):
-    # APPNOTE.TXT 4.3.12
-    header = struct.pack("<LHHHHHHLLLHHHHHLL",
-        0x02014b50, # signature
-        20,         # version made by
-        0,          # version needed to extract
-        0,          # flags
-        compression_method, # compression method
-        0,          # modification date
-        0,          # modification time
-        crc,        # CRC-32
-        compressed_size,    # compressed size
-        uncompressed_size,  # uncompressed size
-        len(filename),      # filename length
-        0,          # extra length
-        0,          # file comment length
-        0,          # disk number where file starts
-        0,          # internal file attributes
-        0,          # external file attributes
-        file_offset,        # offset of local file header
-    )
-    f.write(header)
-    f.write(filename)
-    return len(header) + len(filename)
+    def serialize(self):
+        # APPNOTE.TXT 4.3.7
+        return struct.pack("<LHHHHHLLLHH",
+            0x04034b50, # signature
+            20,         # zip version 2.0
+            0,          # flags
+            COMPRESSION_METHOD_DEFLATE, # compression method
+            0,          # modification date
+            0,          # modification time
+            self.crc,   # CRC-32
+            self.compressed_size,   # compressed size
+            self.uncompressed_size, # uncompressed size
+            len(self.filename),     # filename length
+            0,          # extra length
+        ) + self.filename
 
-def write_eocd(f, cd_num_entries, cd_offset, cd_size):
-    # APPNOTE.TXT 4.3.16
-    header = struct.pack("<LHHHHLLH",
-        0x06054b50, # signature
-        0,          # number of this disk
-        0,          # disk of central directory
-        cd_num_entries, # number of central directory entries on this disk
-        cd_num_entries, # number of central directory entries total
-        cd_size,    # size of central directory
-        cd_offset,  # offset of central directory
-        0,          # comment length
-    )
-    f.write(header)
-    return len(header)
+class CentralDirectoryHeader:
+    # template is a LocalFileHeader instance.
+    def __init__(self, local_file_header_offset, template):
+        self.local_file_header_offset = local_file_header_offset
+        self.compressed_size = template.compressed_size
+        self.uncompressed_size = template.uncompressed_size
+        self.crc = template.crc
+        self.filename = template.filename
+
+    def serialize(self):
+        # APPNOTE.TXT 4.3.12
+        return struct.pack("<LHHHHHHLLLHHHHHLL",
+            0x02014b50, # signature
+            20,         # version made by
+            0,          # version needed to extract
+            0,          # flags
+            COMPRESSION_METHOD_DEFLATE, # compression method
+            0,          # modification date
+            0,          # modification time
+            self.crc,   # CRC-32
+            self.compressed_size,   # compressed size
+            self.uncompressed_size, # uncompressed size
+            len(self.filename),     # filename length
+            0,          # extra length
+            0,          # file comment length
+            0,          # disk number where file starts
+            0,          # internal file attributes
+            0,          # external file attributes
+            self.local_file_header_offset,  # offset of local file header
+        ) + self.filename
+
+class EndOfCentralDirectory:
+    def __init__(self, cd_num_entries, cd_size, cd_offset):
+        self.cd_num_entries = cd_num_entries
+        self.cd_size = cd_size
+        self.cd_offset = cd_offset
+
+    def serialize(self):
+        # APPNOTE.TXT 4.3.16
+        return struct.pack("<LHHHHLLH",
+            0x06054b50, # signature
+            0,          # number of this disk
+            0,          # disk of central directory
+            self.cd_num_entries,    # number of central directory entries on this disk
+            self.cd_num_entries,    # number of central directory entries total
+            self.cd_size,   # size of central directory
+            self.cd_offset, # offset of central directory
+            0,          # comment length
+        )
+
+
+FILENAME_LETTERS = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+filename_state = 0
+def gen_filename():
+    parts = []
+    tmp = filename_state
+    while True:
+        parts.insert(0, FILENAME_LETTERS[tmp % len(FILENAME_LETTERS)])
+        tmp = tmp // len(FILENAME_LETTERS) - 1
+        if tmp < 0:
+            break
+    return bytes(parts)
+
+def gen_filename_update():
+    global filename_state
+    filename_state += 1
+    return gen_filename()
+
+def write_zip_full_reuse(f, compressed_size, num_copies):
+    compressed_data, uncompressed_size, crc_matrix = get_compressed(compressed_size)
+
+    main_crc = crc_matrix_apply(crc_matrix)
+    main_file = LocalFileHeader(len(compressed_data), uncompressed_size, main_crc, gen_filename())
+
+    offset = 0
+    main_file_offset = offset
+    offset += f.write(main_file.serialize())
+    offset += f.write(compressed_data)
+
+    cd_offset = offset
+    for _ in range(num_copies):
+        cd_header = CentralDirectoryHeader(main_file_offset, main_file)
+        cd_header.filename = gen_filename()
+        gen_filename_update()
+        offset += f.write(cd_header.serialize())
+    cd_size = offset - cd_offset
+
+    offset += f.write(EndOfCentralDirectory(num_copies, cd_size, cd_offset).serialize())
+
+    return offset
 
 def do_it(f):
     compression_method, compressed_data, uncompressed_size, crc = get_compressed(1025)
@@ -106,4 +203,4 @@ def do_it(f):
     cd_size = offset - cd_offset
     offset += write_eocd(f, 2, cd_offset, cd_size)
 
-do_it(sys.stdout.buffer)
+write_zip_full_reuse(sys.stdout.buffer, 1025, 512)
