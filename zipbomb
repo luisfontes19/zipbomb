@@ -45,7 +45,7 @@ def precompute_crc_matrix(data):
 
 def precompute_crc_matrix_repeated(data, n):
     accum = precompute_crc_matrix(data)
-    # Square-and-multiple algorithm to compute m = m_byte^n.
+    # Square-and-multiple algorithm to compute m = accum^n.
     m = identity_matrix()
     while n > 0:
         if n & 1 == 1:
@@ -326,22 +326,57 @@ def write_zip_full_reuse(f, compressed_size, num_copies):
 
     return offset
 
-def do_it(f):
-    compression_method, compressed_data, uncompressed_size, crc = get_compressed(1025)
+class FileRecord:
+    def __init__(self, header, data):
+        self.header = header
+        self.data = data
 
+def write_zip_quoted_reuse(f, compressed_size, num_additional):
+    # We build the file table backwards on a stack, starting with the file that
+    # actually contains the bulk of the compressed data.
+    files = []
+    compressed_data, uncompressed_size, crc_matrix = get_compressed(compressed_size)
+    header = LocalFileHeader(len(compressed_data), uncompressed_size, crc_matrix_apply(crc_matrix), gen_filename())
+    files.append(FileRecord(header, compressed_data))
+
+    for _ in range(num_additional):
+        # The file that will follow this one is the one that has most recently
+        # been added to the stack.
+        next_file = files[-1]
+        next_header_bytes = next_file.header.serialize()
+        # Each new file adds a prefix to the contents of the following file (the
+        # prefix is actually the following file's Local File Header). We compute
+        # the CRC matrix for the prefix and right-multiply it with the running
+        # CRC matrix.
+        crc_matrix = matrix_mul(crc_matrix, precompute_crc_matrix(next_header_bytes))
+        # Place a non-final non-compressed DEFLATE block (BFINAL=0, BTYPE=00)
+        # that quotes the following Local File Header and joins up with the
+        # DEFLATE stream that it contains.
+        quote = struct.pack("<BHH", 0x00, len(next_header_bytes), len(next_header_bytes) ^ 0xffff)
+        header = LocalFileHeader(
+            len(quote) + len(next_header_bytes) + next_file.header.compressed_size,
+            len(next_header_bytes) + next_file.header.uncompressed_size,
+            crc_matrix_apply(crc_matrix),
+            gen_filename_update(),
+        )
+        files.append(FileRecord(header, quote))
+
+    central_directory = []
     offset = 0
-    file_header_0_offset = offset
-    offset += write_local_file_header(f, COMPRESSION_METHOD_DEFLATE, 5 + 32 + len(compressed_data), 32 + uncompressed_size, 0, b"BB")
-    offset += f.write(struct.pack("<BHH", 0x00, 32, 32 ^ 0xffff)) # BFINAL=0, BTYPE=00
-
-    file_header_real_offset = offset
-    offset += write_local_file_header(f, compression_method, len(compressed_data), uncompressed_size, crc, b"AA")
-    offset += f.write(compressed_data)
+    while files:
+        record = files.pop()
+        central_directory.append(CentralDirectoryHeader(offset, record.header))
+        offset += f.write(record.header.serialize())
+        offset += f.write(record.data)
 
     cd_offset = offset
-    offset += write_central_directory_header(f, file_header_0_offset, COMPRESSION_METHOD_DEFLATE, 5 + 32 + len(compressed_data), 32 + uncompressed_size, 0, b"BB")
-    offset += write_central_directory_header(f, file_header_real_offset, compression_method, len(compressed_data), uncompressed_size, crc, b"AA")
+    for cd_header in central_directory:
+        offset += f.write(cd_header.serialize())
     cd_size = offset - cd_offset
-    offset += write_eocd(f, 2, cd_offset, cd_size)
 
-write_zip_full_reuse(sys.stdout.buffer, 20000, 20000//48)
+    offset += f.write(EndOfCentralDirectory(len(central_directory), cd_size, cd_offset).serialize())
+
+    return offset
+
+# write_zip_full_reuse(sys.stdout.buffer, 20000, 20000//48)
+write_zip_quoted_reuse(sys.stdout.buffer, 20000, 20000//(48+32+5))
