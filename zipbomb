@@ -58,18 +58,159 @@ def crc_matrix_apply(m, value=0):
     return (matrix_mul_vector(m, (value^0xffffffff)|(1<<32)) & 0xffffffff) ^ 0xffffffff
 
 
-# APPNOTE.TXT 4.4.5
-# 8 - The file is Deflated
-COMPRESSION_METHOD_DEFLATE = 8
+# DEFLATE stuff, see RFC 1951.
+
+class BitBuffer:
+    def __init__(self):
+        self.done = []
+        self.current = 0
+        self.bit_pos = 0
+
+    def push(self, x, n):
+        assert x == x % (1<<n), (bin(x), n)
+        while n >= (8 - self.bit_pos):
+            self.current |= (x << self.bit_pos) & 0xff
+            x >>= (8 - self.bit_pos)
+            n -= (8 - self.bit_pos)
+            self.done.append(self.current)
+            self.current = 0
+            self.bit_pos = 0
+        self.current |= (x << self.bit_pos) & 0xff
+        self.bit_pos += n
+
+    def push_rev(self, x, n):
+        mask = (1<<n)>>1
+        while mask > 0:
+            self.push(x&mask != 0 and 1 or 0, 1)
+            mask >>= 1
+
+    def bytes(self):
+        out = bytes(self.done)
+        if self.bit_pos != 0:
+            out += bytes([self.current])
+        return out
+
 
 # Return a block of data whose compressed size is as specified. Returns a tuple
 # (compressed_data, uncompressed_size, crc_matrix).
 def get_compressed(compressed_size):
-    uncompressed_size = compressed_size - 5
-    header = struct.pack("<BHH", 0x01, uncompressed_size, uncompressed_size ^ 0xffff) # BFINAL=1, BTYPE=00
-    compressed_data = header + CHOSEN_BYTE * uncompressed_size
+    bits = BitBuffer()
+
+    # BFINAL=1
+    bits.push(0b1, 1)
+    # BTYPE=10: dynamic Huffman codes
+    bits.push(0b10, 2)
+    # HLIT=29: 257 + 29 = 286 literal/length codes (code 285 is what gives max compression)
+    bits.push(0b11101, 5)
+    # HDIST=0: 1 + 0 = 1 distance code
+    bits.push(0b00000, 5)
+    # HCLEN=14: 4 + 14 = 18 code length codes (we need code length 1 which is at position 17).
+    bits.push(0b1110, 4)
+
+    # Huffman tree for code lengths. Contains HCLEN+4 entries. Supply code
+    # lengths:
+    #  sym length
+    #    0 2
+    #    1 3
+    #    2 3
+    #   18 1
+    # which define the tree:
+    #  sym code
+    #    0 10
+    #    1 110
+    #    2 111
+    #   18 0
+    bits.push(0b000, 3) # 16
+    bits.push(0b000, 3) # 17
+    bits.push(0b001, 3) # 18
+    bits.push(0b010, 3) # 0
+    bits.push(0b000, 3) # 8
+    bits.push(0b000, 3) # 7
+    bits.push(0b000, 3) # 9
+    bits.push(0b000, 3) # 6
+    bits.push(0b000, 3) # 10
+    bits.push(0b000, 3) # 5
+    bits.push(0b000, 3) # 11
+    bits.push(0b000, 3) # 4
+    bits.push(0b000, 3) # 12
+    bits.push(0b000, 3) # 3
+    bits.push(0b000, 3) # 13
+    bits.push(0b011, 3) # 2
+    bits.push(0b000, 3) # 14
+    bits.push(0b011, 3) # 1
+    code_lengths = {
+         0: ( 0b10, 2),
+         1: (0b110, 3),
+         2: (0b111, 3),
+        18: (  0b0, 1),
+    }
+
+    # Huffman tree for literal/length values. Contains HLIT+257 entries. Code
+    # lengths are represented in terms of the code_lengths tree just defined.
+    # Supply code lengths:
+    #          sym length
+    #  CHOSEN_BYTE 2    (literal byte)
+    #          256 2    (end of stream)
+    #          285 1    (length 258)
+    # which define the tree:
+    #          sym code
+    #  CHOSEN_BYTE 10   (literal byte)
+    #          256 11   (end of stream)
+    #          285 0    (length 258)
+
+    # Skip n literal/length slots.
+    def skip(n):
+        while n >= 11:
+            x = min(n, 138)
+            bits.push_rev(*code_lengths[18]) # 7 bits of length to follow
+            bits.push(x - 11, 7)
+            n -= x
+        while n > 0:
+            bits.push_rev(*code_lengths[0])
+            n -= 1
+    skip(ord(CHOSEN_BYTE))
+    bits.push_rev(*code_lengths[2]) # code for literal byte
+    skip(256 - (ord(CHOSEN_BYTE) + 1))
+    bits.push_rev(*code_lengths[2]) # code for 256, end of stream
+    skip(285 - 257)
+    bits.push_rev(*code_lengths[1]) # code for 285, copy 258 bytes
+
+    # Huffman tree for distances. Contains HDIST+1 entries. We only use code 0
+    # meaning a distance of 1. "If only one distance code is used, it is encoded
+    # using one bit, not zero bits; in this case there is a single code length
+    # of one, with one unused code."
+    bits.push_rev(*code_lengths[1])
+
+    # A literal byte to start the whole process.
+    bits.push_rev(0b10, 2)
+    uncompressed_size = 1
+
+    # Now every pair of 0 bits encodes 258 copies of CHOSEN_BYTE.
+    is_even = bits.bit_pos % 2 == 0
+    # Including whatever zero bits remain at the end of the bit buffer.
+    uncompressed_size += (8 - bits.bit_pos) // 2 * 258
+    prefix = bits.bytes()
+
+    if is_even:
+        suffix = bytes([0b11000000])
+    else:
+        suffix = bytes([0b01100000])
+    # It takes 2 bits to encode the end of stream, which leaves 6 bits that
+    # encode compressed data. In the !is_even case, 1 of the 6 bits is borrowed
+    # from the prefix.
+    uncompressed_size += 3 * 258
+
+    body = b"\x00" * (compressed_size - len(prefix) - len(suffix))
+    uncompressed_size += len(body) * 4 * 258
+
+    compressed_data = prefix + body + suffix
     assert len(compressed_data) == compressed_size
     return compressed_data, uncompressed_size, precompute_crc_matrix_repeated(CHOSEN_BYTE, uncompressed_size)
+
+
+# APPNOTE.TXT 4.4.5
+# 8 - The file is Deflated
+COMPRESSION_METHOD_DEFLATE = 8
 
 class LocalFileHeader:
     def __init__(self, compressed_size, uncompressed_size, crc, filename):
@@ -203,4 +344,4 @@ def do_it(f):
     cd_size = offset - cd_offset
     offset += write_eocd(f, 2, cd_offset, cd_size)
 
-write_zip_full_reuse(sys.stdout.buffer, 1025, 512)
+write_zip_full_reuse(sys.stdout.buffer, 20000, 20000//48)
