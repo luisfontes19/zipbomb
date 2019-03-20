@@ -213,6 +213,9 @@ def get_compressed(compressed_size):
 # 8 - The file is Deflated
 COMPRESSION_METHOD_DEFLATE = 8
 
+MOD_DATE = 0x0548
+MOD_TIME = 0x6000
+
 class LocalFileHeader:
     def __init__(self, compressed_size, uncompressed_size, crc, filename):
         self.compressed_size = compressed_size
@@ -227,8 +230,8 @@ class LocalFileHeader:
             20,         # zip version 2.0
             0,          # flags
             COMPRESSION_METHOD_DEFLATE, # compression method
-            0,          # modification date
-            0,          # modification time
+            MOD_TIME,   # modification time
+            MOD_DATE,   # modification date
             self.crc,   # CRC-32
             self.compressed_size,   # compressed size
             self.uncompressed_size, # uncompressed size
@@ -253,8 +256,8 @@ class CentralDirectoryHeader:
             0,          # version needed to extract
             0,          # flags
             COMPRESSION_METHOD_DEFLATE, # compression method
-            0,          # modification date
-            0,          # modification time
+            MOD_TIME,   # modification time
+            MOD_DATE,   # modification date
             self.crc,   # CRC-32
             self.compressed_size,   # compressed size
             self.uncompressed_size, # uncompressed size
