@@ -393,4 +393,4 @@ def write_zip_quoted_reuse(f, compressed_size, num_additional):
     return offset
 
 # write_zip_full_reuse(sys.stdout.buffer, 20000, 20000//48)
-write_zip_quoted_reuse(sys.stdout.buffer, 20000, 20000//(48+32+5))
+write_zip_quoted_reuse(sys.stdout.buffer, 3500000, 3500000//(48+32+5))
