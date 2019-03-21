@@ -91,7 +91,6 @@ class BitBuffer:
             out += bytes([self.current])
         return out
 
-
 # Return a block of data whose compressed size is as specified. Returns a tuple
 # (compressed_data, uncompressed_size, crc_matrix).
 def get_compressed(compressed_size):
@@ -394,6 +393,7 @@ def write_zip_quoted_reuse(f, compressed_size, num_additional):
     offset += f.write(EndOfCentralDirectory(len(central_directory), cd_size, cd_offset).serialize())
 
     return offset
+
 
 # write_zip_full_reuse(sys.stdout.buffer, 20000, 20000//48)
 write_zip_quoted_reuse(sys.stdout.buffer, 20000, 20000//(48+32+5))
