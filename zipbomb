@@ -388,4 +388,24 @@ def write_zip_quoted_reuse(f, compressed_size, num_additional):
 
 
 # write_zip_full_reuse(sys.stdout.buffer, 20000, 20000//48)
-write_zip_quoted_reuse(sys.stdout.buffer, 20000, 20000//(48+32+5))
+write_zip_quoted_reuse(sys.stdout.buffer, 21081-16+29, 250-1+1)
+
+# S compressed file data
+# N * 30 Local File Headers
+# N * 46 Central Directory Headers
+# N * 2 * ~2 filenames
+# (N-1) * 5 quotes
+# 16 bytes DEFLATE overhead (represents 1033 bytes itself)
+#
+# maximize (1033 + (S - 16) * 1032) * N + 32 * (N - 1)
+# subject to
+#   16 + S + N * (30 + 46 + 4) + (N-1)*5 + 22 <= 42374
+#
+# max (33 + (S - 15) * 1032) * N - 32
+#     (1032*S - 15447) * N
+#     (1032*(42331 - 85*N) - 15447) * N
+#     43670115*N - 87720*N*N
+#     => max integer N at N=250 => S=21081
+#
+#   S = 42331 - 85*N
+#   N = (42331 - S)/85
