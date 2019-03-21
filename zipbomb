@@ -289,7 +289,7 @@ class EndOfCentralDirectory:
         )
 
 
-FILENAME_LETTERS = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+FILENAME_LETTERS = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 filename_state = 0
 def gen_filename():
     parts = []
