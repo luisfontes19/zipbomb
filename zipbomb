@@ -290,27 +290,20 @@ class EndOfCentralDirectory:
 
 
 FILENAME_LETTERS = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-filename_state = 0
-def gen_filename():
-    parts = []
-    tmp = filename_state
+def filename_for_index(i):
+    letters = []
     while True:
-        parts.insert(0, FILENAME_LETTERS[tmp % len(FILENAME_LETTERS)])
-        tmp = tmp // len(FILENAME_LETTERS) - 1
-        if tmp < 0:
+        letters.insert(0, FILENAME_LETTERS[i % len(FILENAME_LETTERS)])
+        i = i // len(FILENAME_LETTERS) - 1
+        if i < 0:
             break
-    return bytes(parts)
-
-def gen_filename_update():
-    global filename_state
-    filename_state += 1
-    return gen_filename()
+    return bytes(letters)
 
 def write_zip_full_reuse(f, compressed_size, num_copies):
     compressed_data, uncompressed_size, crc_matrix = get_compressed(compressed_size)
 
     main_crc = crc_matrix_apply(crc_matrix)
-    main_file = LocalFileHeader(len(compressed_data), uncompressed_size, main_crc, gen_filename())
+    main_file = LocalFileHeader(len(compressed_data), uncompressed_size, main_crc, filename_for_index(0))
 
     offset = 0
     main_file_offset = offset
@@ -318,10 +311,9 @@ def write_zip_full_reuse(f, compressed_size, num_copies):
     offset += f.write(compressed_data)
 
     cd_offset = offset
-    for _ in range(num_copies):
+    for i in range(num_copies):
         cd_header = CentralDirectoryHeader(main_file_offset, main_file)
-        cd_header.filename = gen_filename()
-        gen_filename_update()
+        cd_header.filename = filename_for_index(i)
         offset += f.write(cd_header.serialize())
     cd_size = offset - cd_offset
 
@@ -339,12 +331,12 @@ def write_zip_quoted_reuse(f, compressed_size, num_additional):
     # actually contains the bulk of the compressed data.
     files = []
     compressed_data, uncompressed_size, crc_matrix = get_compressed(compressed_size)
-    header = LocalFileHeader(len(compressed_data), uncompressed_size, crc_matrix_apply(crc_matrix), gen_filename())
+    header = LocalFileHeader(len(compressed_data), uncompressed_size, crc_matrix_apply(crc_matrix), filename_for_index(num_additional))
     files.append(FileRecord(header, compressed_data))
 
     crc_matrix = precompute_crc_matrix_repeated(b"\x00", uncompressed_size)
 
-    for _ in range(num_additional):
+    for i in range(num_additional):
         # The file that will follow this one is the one that has most recently
         # been added to the stack.
         next_file = files[-1]
@@ -373,7 +365,7 @@ def write_zip_quoted_reuse(f, compressed_size, num_additional):
             len(quote) + len(next_header_bytes) + next_file.header.compressed_size,
             len(next_header_bytes) + next_file.header.uncompressed_size,
             new_crc,
-            gen_filename_update(),
+            filename_for_index(num_additional - i - 1),
         )
         files.append(FileRecord(header, quote))
 
