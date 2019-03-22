@@ -216,11 +216,12 @@ MOD_DATE = 0x0548
 MOD_TIME = 0x6000
 
 class LocalFileHeader:
-    def __init__(self, compressed_size, uncompressed_size, crc, filename):
+    def __init__(self, compressed_size, uncompressed_size, crc, filename, extra_length):
         self.compressed_size = compressed_size
         self.uncompressed_size = uncompressed_size
         self.crc = crc
         self.filename = filename
+        self.extra_length = extra_length
 
     def serialize(self):
         # APPNOTE.TXT 4.3.7
@@ -235,7 +236,7 @@ class LocalFileHeader:
             self.compressed_size,   # compressed size
             self.uncompressed_size, # uncompressed size
             len(self.filename),     # filename length
-            0,          # extra length
+            self.extra_length,      # extra length
         ) + self.filename
 
 class CentralDirectoryHeader:
@@ -303,7 +304,7 @@ def write_zip_full_reuse(f, compressed_size, num_copies):
     compressed_data, uncompressed_size, crc_matrix = get_compressed(compressed_size)
 
     main_crc = crc_matrix_apply(crc_matrix)
-    main_file = LocalFileHeader(len(compressed_data), uncompressed_size, main_crc, filename_for_index(0))
+    main_file = LocalFileHeader(len(compressed_data), uncompressed_size, main_crc, filename_for_index(0), 0)
 
     offset = 0
     main_file_offset = offset
@@ -331,7 +332,7 @@ def write_zip_quoted_reuse(f, compressed_size, num_additional):
     # actually contains the bulk of the compressed data.
     files = []
     compressed_data, uncompressed_size, crc_matrix = get_compressed(compressed_size)
-    header = LocalFileHeader(len(compressed_data), uncompressed_size, crc_matrix_apply(crc_matrix), filename_for_index(num_additional))
+    header = LocalFileHeader(len(compressed_data), uncompressed_size, crc_matrix_apply(crc_matrix), filename_for_index(num_additional), 0)
     files.append(FileRecord(header, compressed_data))
 
     crc_matrix = precompute_crc_matrix_repeated(b"\x00", uncompressed_size)
@@ -366,6 +367,7 @@ def write_zip_quoted_reuse(f, compressed_size, num_additional):
             len(next_header_bytes) + next_file.header.uncompressed_size,
             new_crc,
             filename_for_index(num_additional - i - 1),
+            0,
         )
         files.append(FileRecord(header, quote))
 
