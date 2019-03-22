@@ -213,7 +213,7 @@ def get_compressed(compressed_size):
 COMPRESSION_METHOD_DEFLATE = 8
 
 MOD_DATE = 0x0548
-MOD_TIME = 0x6000
+MOD_TIME = 0x6ca0
 
 class LocalFileHeader:
     def __init__(self, compressed_size, uncompressed_size, crc, filename, extra_length):
