@@ -354,7 +354,7 @@ def write_zip_quoted_reuse(f, compressed_size, num_additional):
         # because crc1 and crc2 are already conditioned.
         new_crc = crc_matrix_apply(crc_matrix, crc1 ^ 0xffffffff) ^ 0xffffffff ^ crc2
         # Next file will have an additional len(next_header_bytes) accumulated
-        # in crc_matrix.
+        # into crc_matrix.
         crc_matrix = matrix_mul(crc_matrix, precompute_crc_matrix_repeated(b"\x00", len(next_header_bytes)))
 
         # Place a non-final non-compressed DEFLATE block (BFINAL=0, BTYPE=00)
