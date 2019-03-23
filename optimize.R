@@ -61,4 +61,11 @@ optimize <- function(total_size) {
 	list(deflate_size=deflate_size, num_aliases=num_aliases)
 }
 
+# 2^32 - 1 is the maximum representable file size
+# 1033 is the built-in contents of the DEFLATE block before adding any zeroes
+# sum_filename_lengths(65535) - 1 is the filename quoting gain of the first (biggest) file
+# 30*65534 is the Local File Header quoting gain of the first (biggest) file
+# 1032.0 is the additional file size gained for every zero byte in deflate_size
+sprintf("deflate_size for max-size zip: %.4f", (2^32 - 1 - 1033 - (sum_filename_lengths(65535) - 1 + 30*65534)) / 1032.0)
+
 optimize(42374)

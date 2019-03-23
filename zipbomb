@@ -390,7 +390,8 @@ def write_zip_quoted_reuse(f, compressed_size, num_additional):
 
 
 # write_zip_full_reuse(sys.stdout.buffer, 21125+16, 442)
-write_zip_quoted_reuse(sys.stdout.buffer, 21078+16, 250)
+# write_zip_quoted_reuse(sys.stdout.buffer, 21078+16, 250)
+write_zip_quoted_reuse(sys.stdout.buffer, 4159677+16, 65534)
 
 # S compressed file data
 # N * 30 Local File Headers
