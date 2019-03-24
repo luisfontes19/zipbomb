@@ -66,6 +66,6 @@ optimize <- function(total_size) {
 # sum_filename_lengths(65535) - 1 is the filename quoting gain of the first (biggest) file
 # 30*65534 is the Local File Header quoting gain of the first (biggest) file
 # 1032.0 is the additional file size gained for every zero byte in deflate_size
-sprintf("deflate_size for max-size zip: %.4f", (2^32 - 1 - 1033 - (sum_filename_lengths(65535) - 1 + 30*65534)) / 1032.0)
+sprintf("uncompressed_size for max-size zip: %.4f", 2^32 - 1 - (sum_filename_lengths(65535) - 1 + 30*65534))
 
 optimize(42374)
