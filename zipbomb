@@ -5,7 +5,7 @@ import struct
 import sys
 
 
-CHOSEN_BYTE = b"A"
+CHOSEN_BYTE = ord(b"A") # homage to 42.zip
 
 
 # CRC-32 precomputation using matrices in GF(2). Similar to crc32_combine in
@@ -91,95 +91,110 @@ class BitBuffer:
             out += bytes([self.current])
         return out
 
+# RFC 1951 section 3.2.2. Input is a sym: length dict and output is a
+# sym: (code, length) dict.
+def huffman_codes_from_lengths(sym_lengths):
+    bl_count = {}
+    max_length = 0
+    for _, length in sym_lengths.items():
+        bl_count.setdefault(length, 0)
+        bl_count[length] += 1
+        max_length = max(max_length, length)
+
+    next_code = {}
+    code = 0
+    for length in range(max_length):
+        code = (code + bl_count.get(length, 0)) << 1
+        next_code[length+1] = code
+
+    result = {}
+    for sym, length in sorted(sym_lengths.items(), key=lambda x: (x[1], x[0])):
+        assert next_code[length] >> length == 0, (sym, bin(next_code[length]), length)
+        result[sym] = next_code[length], length
+        next_code[length] += 1
+    return result
+
+def print_huffman_codes(sym_codes, **kwargs):
+    max_sym_length = max(len("{}".format(sym)) for sym in sym_codes)
+    for sym, code in sorted(sym_codes.items()):
+        code, length = code
+        print("{:{}}: {:0{}b}".format(sym, max_sym_length, code, length), **kwargs)
+
 # Return a block of data whose compressed size is as specified. Returns a tuple
 # (compressed_data, uncompressed_size, crc_matrix).
-def get_compressed(compressed_size):
-    bits = BitBuffer()
+def get_compressed(compressed_size, final=1):
+    # Huffman tree for code lengths.
+    code_length_lengths = {
+         0: 2,
+         1: 3,
+         2: 3,
+        18: 1,
+    }
+    code_length_codes = huffman_codes_from_lengths(code_length_lengths)
+    # print_huffman_codes(code_length_codes, file=sys.stderr)
 
-    # BFINAL=1
-    bits.push(0b1, 1)
+    # Huffman tree for literal/length values.
+    ll_lengths = {
+        CHOSEN_BYTE: 2, # literal byte
+                256: 2, # end of stream
+                285: 1, # copy 285 bytes
+    }
+    # print_huffman_codes(huffman_codes_from_lengths(ll_lengths), file=sys.stderr)
+
+    # Huffman tree for distance codes.
+    distance_lengths = {
+        0: 1,   # distance 1
+    }
+    # print_huffman_codes(huffman_codes_from_lengths(distance_lengths), file=sys.stderr)
+
+    bits = BitBuffer()
+    # BFINAL
+    bits.push(0b1, final and 1 or 0)
     # BTYPE=10: dynamic Huffman codes
     bits.push(0b10, 2)
-    # HLIT=29: 257 + 29 = 286 literal/length codes (code 285 is what gives max compression)
-    bits.push(0b11101, 5)
-    # HDIST=0: 1 + 0 = 1 distance code
-    bits.push(0b00000, 5)
-    # HCLEN=14: 4 + 14 = 18 code length codes (we need code length 1 which is at position 17).
-    bits.push(0b1110, 4)
+    # HLIT is 257 less than the number of literal/length codes
+    bits.push(max(ll_lengths) + 1 - 257, 5)
+    # HDIST is 1 less than the number of distance codes
+    bits.push(max(distance_lengths) + 1 - 1, 5)
+    # HCLEN is 4 less than the number of code length codes
+    CODE_LENGTH_ALPHABET = (16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15)
+    num_code_length_codes = max(CODE_LENGTH_ALPHABET.index(sym) for sym in code_length_lengths) + 1
+    bits.push(num_code_length_codes - 4, 4)
 
-    # Huffman tree for code lengths. Contains HCLEN+4 entries. Supply code
-    # lengths:
-    #  sym length
-    #    0 2
-    #    1 3
-    #    2 3
-    #   18 1
-    # which define the tree:
-    #  sym code
-    #    0 10
-    #    1 110
-    #    2 111
-    #   18 0
-    bits.push(0b000, 3) # 16
-    bits.push(0b000, 3) # 17
-    bits.push(0b001, 3) # 18
-    bits.push(0b010, 3) # 0
-    bits.push(0b000, 3) # 8
-    bits.push(0b000, 3) # 7
-    bits.push(0b000, 3) # 9
-    bits.push(0b000, 3) # 6
-    bits.push(0b000, 3) # 10
-    bits.push(0b000, 3) # 5
-    bits.push(0b000, 3) # 11
-    bits.push(0b000, 3) # 4
-    bits.push(0b000, 3) # 12
-    bits.push(0b000, 3) # 3
-    bits.push(0b000, 3) # 13
-    bits.push(0b011, 3) # 2
-    bits.push(0b000, 3) # 14
-    bits.push(0b011, 3) # 1
-    code_lengths = {
-         0: ( 0b10, 2),
-         1: (0b110, 3),
-         2: (0b111, 3),
-        18: (  0b0, 1),
-    }
+    # Output Huffman tree for code lengths.
+    for code_length in CODE_LENGTH_ALPHABET[:num_code_length_codes]:
+        bits.push(code_length_lengths.get(code_length, 0), 3)
 
-    # Huffman tree for literal/length values. Contains HLIT+257 entries. Code
-    # lengths are represented in terms of the code_lengths tree just defined.
-    # Supply code lengths:
-    #          sym length
-    #  CHOSEN_BYTE 2    (literal byte)
-    #          256 2    (end of stream)
-    #          285 1    (length 258)
-    # which define the tree:
-    #          sym code
-    #  CHOSEN_BYTE 10   (literal byte)
-    #          256 11   (end of stream)
-    #          285 0    (length 258)
-
-    # Skip n literal/length slots.
+    # Skip n literal/length slots. Assumes we have length codes for 0 and 18.
     def skip(n):
         while n >= 11:
-            x = min(n, 138)
-            bits.push_rev(*code_lengths[18]) # 7 bits of length to follow
+            if n < 138:
+                x = n
+            elif n < 138 + 11 and code_length_lengths[18] < (n - 138) * code_length_lengths[0]:
+                # It'll be cheaper to cut this 18 block short and do the
+                # remainder with another 18 block.
+                x = n - 11
+            else:
+                x = 138
+            bits.push_rev(*code_length_codes[18]) # 7 bits of length to follow
             bits.push(x - 11, 7)
             n -= x
         while n > 0:
-            bits.push_rev(*code_lengths[0])
+            bits.push_rev(*code_length_codes[0])
             n -= 1
-    skip(ord(CHOSEN_BYTE))
-    bits.push_rev(*code_lengths[2]) # code for literal byte
-    skip(256 - (ord(CHOSEN_BYTE) + 1))
-    bits.push_rev(*code_lengths[2]) # code for 256, end of stream
-    skip(285 - 257)
-    bits.push_rev(*code_lengths[1]) # code for 285, copy 258 bytes
+    # Output a Huffman tree in terms of code lengths.
+    def output_code_length_tree(sym_lengths):
+        cur = 0
+        for sym, length in sorted(sym_lengths.items()):
+            skip(sym - cur)
+            bits.push_rev(*code_length_codes[length])
+            cur = sym + 1
 
-    # Huffman tree for distances. Contains HDIST+1 entries. We only use code 0
-    # meaning a distance of 1. "If only one distance code is used, it is encoded
-    # using one bit, not zero bits; in this case there is a single code length
-    # of one, with one unused code."
-    bits.push_rev(*code_lengths[1])
+    # Output Huffman tree for literal/length values.
+    output_code_length_tree(ll_lengths)
+
+    # Output Huffman tree for distance codes.
+    output_code_length_tree(distance_lengths)
 
     # A literal byte to start the whole process.
     bits.push_rev(0b10, 2)
@@ -205,7 +220,7 @@ def get_compressed(compressed_size):
 
     compressed_data = prefix + body + suffix
     assert len(compressed_data) == compressed_size
-    return compressed_data, uncompressed_size, precompute_crc_matrix_repeated(CHOSEN_BYTE, uncompressed_size)
+    return compressed_data, uncompressed_size, precompute_crc_matrix_repeated(bytes([CHOSEN_BYTE]), uncompressed_size)
 
 
 # APPNOTE.TXT 4.4.5
