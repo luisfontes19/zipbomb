@@ -3,15 +3,15 @@ B <- 36
 # Combined length of n filenames generated according to our 36-digit
 # scheme: 0 1 ... Z 00 01 ... 0Z 10 11 ... 1Z ... ZZ 000. Look at it
 # like this: if we have n filenames, then all n of them have at least 1
-# digit; all but 10 have at least 2 digits; all but 100 have at least 3
-# digits, all but 1000 have at least 4 digits; and so on. In general,
+# digit; all but 10 have at least 2 digits; all but 110 have at least 3
+# digits, all but 1110 have at least 4 digits; and so on. In general,
 # the length of the longest filename increases by 1 at each index that
 # is a repunit 11...1₃₆ = 1 + 36 + 36² + ... + 36^(d−1) = (36^d−1)/(36−1).
 # Let d be the length of the longest repunit not greater than n. Then
 # the combined length of filenames is
-#   Sum from 1 to d of: n+1 − (36^d−1)/(36−1)
-#    = d×(n+1) - Sum from 1 to d of: (36^d−1)/(36−1)
-#    = d×(n+1) − (36^d−1)×36/(36−1)² - d/(36−1)
+#   Sum(i) from 1 to d of: n − (36^i−1)/(36−1) + 1
+#    = d×(n+1) - Sum(i) from 1 to d of: (36^i−1)/(36−1)
+#    = d×(n+1) − ((36^d−1)×36/(36−1)² - d/(36−1))
 # where the last equality comes from adapting a formula for the partial
 # sums of base-10 repunits from https://oeis.org/A014824.
 #
