@@ -68,14 +68,14 @@ additional_size <- function(num_additional) {
 optimize <- function(total_size) {
 	avail <- total_size - 30 - 46 - 22
 	num_additional <- with(list(n=0:(avail/(30+5+46))), {
-		which.max(unzipped_size(avail - additional_size(n), n))
+		which.max(unzipped_size(pmin((2^32)/1032, avail - additional_size(n)), n))
 	})
 	compressed_size = avail - additional_size(num_additional)
 	list(compressed_size=compressed_size, num_additional=num_additional)
 }
 
 x <- data.frame(zipped_size=c(), unzipped_size=c())
-for (n in seq(200, 90000, 1000)) {
+for (n in seq(200, 10000000, 100000)) {
 	params <- optimize(n)
 	x <- rbind(x, data.frame(zipped_size=n, unzipped_size=unzipped_size(params$compressed_size, params$num_additional)))
 }
