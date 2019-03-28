@@ -22,43 +22,53 @@ sum_filename_lengths <- function(n) {
 	d*(n+1) - ((B^d-1)/(B-1) * B/(B-1) - d/(B-1))
 }
 
-compressed_size <- function(deflate_size, num_aliases) {
+triangular_sum_filename_lengths <- Vectorize(function(n) {
+	m <- 1
+	r <- -1
+	s <- 0
+	while (B^m <= n) {
+		s <- s + m * B^m * (B^m + 1) / 2 + m * r * B^m
+		n <- n - B^m
+		r <- r + B^m
+		m <- m + 1
+	}
+	s <- s + m * n * (n + 1) / 2 + m * r * n
+	s
+})
+
+zipped_size <- function(deflate_size, num_additional) {
 	size <- 0
-	size <- size + num_aliases * 5 # 5 is DEFLATE quoting overhead
+	size <- size + num_additional * 5 # 5 is DEFLATE quoting overhead
 	size <- size + 16 + deflate_size # 16 is DEFLATE compression overhead
-	size <- size + 30 * (1 + num_aliases) # Local File Headers
-	size <- size + 46 * (1 + num_aliases) # Central Directory Headers
-	size <- size + 2 * sum_filename_lengths(1 + num_aliases) # Filenames in Local File Headers and Central Directory Headers
+	size <- size + 30 * (1 + num_additional) # Local File Headers
+	size <- size + 46 * (1 + num_additional) # Central Directory Headers
+	size <- size + 2 * sum_filename_lengths(1 + num_additional) # Filenames in Local File Headers and Central Directory Headers
 	size <- size + 22 # EOCD
 	size
 }
 
-uncompressed_size <- Vectorize(function(deflate_size, num_aliases) {
+unzipped_size <- function(deflate_size, num_additional) {
 	size <- 0
-	size <- size + (1 + 1032 + deflate_size * 1032) * (1 + num_aliases)
-	size <- size + 30 * (num_aliases * (num_aliases + 1)) / 2
-	size <- size + sum(sum_filename_lengths(1+num_aliases) - sum_filename_lengths(1:num_aliases))
+	size <- size + (1 + 1032 + deflate_size * 1032) * (1 + num_additional)
+	size <- size + 30 * (num_additional * (num_additional + 1)) / 2
+	size <- size + triangular_sum_filename_lengths(1 + num_additional)
 	size
-})
+}
 
-# compressed_size(21094-16, 250)
-# uncompressed_size(21094-16, 250)
-
-# compressed_size(500000-16, 1297)
-# uncompressed_size(500000-16, 1297)
-
-aliases_size <- function(num_aliases) {
-	num_aliases * (30 + 46 + 5) + 2 * sum_filename_lengths(1+num_aliases)
+additional_size <- function(num_additional) {
+	num_additional * (30 + 46 + 5) + 2 * sum_filename_lengths(1 + num_additional)
 }
 
 optimize <- function(total_size) {
-	avail <- total_size - 30 - 46 - 16 - 22
-	num_aliases <- with(list(n=0:(avail/(30+5+46))), {
-		plot(n, uncompressed_size(avail - aliases_size(n), n))
-		which.max(uncompressed_size(avail - aliases_size(n), n))
+	avail <- total_size - 30 - 46 - 22
+	num_additional <- with(list(n=0:(avail/(30+5+46))), {
+		plot(n, unzipped_size(avail - additional_size(n), n))
+		which.max(unzipped_size(avail - additional_size(n), n))
 	})
-	deflate_size = avail - aliases_size(num_aliases)
-	list(deflate_size=deflate_size, num_aliases=num_aliases)
+	compressed_size = avail - additional_size(num_additional)
+	list(compressed_size=compressed_size, num_additional=num_additional)
 }
 
-optimize(42374)
+params <- optimize(42374)
+params
+zipped_size(params$compressed_size, params$num_additional)

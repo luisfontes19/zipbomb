@@ -527,10 +527,7 @@ def write_zip_quoted_reuse(f, num_additional, compressed_size=None, uncompressed
 
 
 # write_zip_full_reuse(sys.stdout.buffer, 442, compressed_size=21125+16)
-# write_zip_quoted_reuse(sys.stdout.buffer, 250, compressed_size=21078+16)
-
-# write_zip_quoted_reuse(sys.stdout.buffer, 25, uncompressed_size=19519)
-# write_zip_quoted_reuse(sys.stdout.buffer, 25, uncompressed_size=19224)
+# write_zip_quoted_reuse(sys.stdout.buffer, 250, compressed_size=21094)
 
 # (1<<32) - 1 is the maximum representable file size.
 # 30*65534 is the file size increase from quoting 65534 Local File Headers.
