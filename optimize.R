@@ -42,10 +42,10 @@ triangular_sum_filename_lengths <- Vectorize(function(n) {
 	s
 })
 
-zipped_size <- function(deflate_size, num_additional) {
+zipped_size <- function(compressed_size, num_additional) {
 	size <- 0
 	size <- size + num_additional * 5 # 5 is DEFLATE quoting overhead
-	size <- size + 16 + deflate_size # 16 is DEFLATE compression overhead
+	size <- size + 16 + compressed_size # 16 is DEFLATE compression overhead
 	size <- size + 30 * (1 + num_additional) # Local File Headers
 	size <- size + 46 * (1 + num_additional) # Central Directory Headers
 	size <- size + 2 * sum_filename_lengths(1 + num_additional) # Filenames in Local File Headers and Central Directory Headers
@@ -53,9 +53,9 @@ zipped_size <- function(deflate_size, num_additional) {
 	size
 }
 
-unzipped_size <- function(deflate_size, num_additional) {
+unzipped_size <- function(compressed_size, num_additional) {
 	size <- 0
-	size <- size + (1 + 1032 + deflate_size * 1032) * (1 + num_additional)
+	size <- size + (1 + 1032 + compressed_size * 1032) * (1 + num_additional)
 	size <- size + 30 * (num_additional * (num_additional + 1)) / 2
 	size <- size + triangular_sum_filename_lengths(1 + num_additional)
 	size
@@ -68,12 +68,18 @@ additional_size <- function(num_additional) {
 optimize <- function(total_size) {
 	avail <- total_size - 30 - 46 - 22
 	num_additional <- with(list(n=0:(avail/(30+5+46))), {
-		plot(n, unzipped_size(avail - additional_size(n), n))
 		which.max(unzipped_size(avail - additional_size(n), n))
 	})
 	compressed_size = avail - additional_size(num_additional)
 	list(compressed_size=compressed_size, num_additional=num_additional)
 }
+
+x <- data.frame(zipped_size=c(), unzipped_size=c())
+for (n in seq(200, 90000, 1000)) {
+	params <- optimize(n)
+	x <- rbind(x, data.frame(zipped_size=n, unzipped_size=unzipped_size(params$compressed_size, params$num_additional)))
+}
+plot(x$zipped_size, x$unzipped_size)
 
 params <- optimize(42374)
 params
