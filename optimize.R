@@ -61,25 +61,39 @@ unzipped_size <- function(compressed_size, num_additional) {
 	size
 }
 
+unzipped_size_from_uncompressed <- function(uncompressed_size, num_additional) {
+	size <- 0
+	size <- size + uncompressed_size * (1 + num_additional)
+	size <- size + 30 * (num_additional * (num_additional + 1)) / 2
+	size <- size + triangular_sum_filename_lengths(1 + num_additional)
+	size
+}
+
 additional_size <- function(num_additional) {
 	num_additional * (30 + 46 + 5) + 2 * sum_filename_lengths(1 + num_additional)
 }
 
-optimize <- function(total_size) {
-	avail <- total_size - 30 - 46 - 22
+optimize_unzipped_size <- function(zipped_size) {
+	avail <- zipped_size - 30 - 46 - 22
 	num_additional <- with(list(n=0:(avail/(30+5+46))), {
-		which.max(unzipped_size(pmin((2^32)/1032, avail - additional_size(n)), n))
+		which.max(unzipped_size(avail - additional_size(n), n))
 	})
 	compressed_size = avail - additional_size(num_additional)
 	list(compressed_size=compressed_size, num_additional=num_additional)
 }
 
-x <- data.frame(zipped_size=c(), unzipped_size=c())
-for (n in seq(200, 10000000, 100000)) {
+x <- data.frame(zipped_size=c(), unzipped_size=c(), name=c())
+for (n in seq(200, 10000000, 500000)) {
+	print(n)
 	params <- optimize(n)
-	x <- rbind(x, data.frame(zipped_size=n, unzipped_size=unzipped_size(params$compressed_size, params$num_additional)))
+	x <- rbind(x, data.frame(zipped_size=n, unzipped_size=unzipped_size(params$compressed_size, params$num_additional), name="comp"))
+	params <- optimize_uncompressed(n)
+	x <- rbind(x, data.frame(zipped_size=n, unzipped_size=unzipped_size_from_uncompressed(params$uncompressed_size, params$num_additional), name="uncomp"))
 }
-plot(x$zipped_size, x$unzipped_size)
+
+library(ggplot2)
+ggplot(x, aes(zipped_size, unzipped_size, color=name)) + geom_point()
+# plot(x$zipped_size, x$unzipped_size)
 
 params <- optimize(42374)
 params
