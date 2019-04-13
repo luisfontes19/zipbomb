@@ -276,8 +276,8 @@ def bulk_deflate(repeated_byte, compressed_size=None, uncompressed_size=None, fi
             bits.push(*distance_codes[0])
             n += 258
     else:
-        # Push the stream-end code as far back in the byte as possible.
-        while bits.bit_pos + ll_lengths[repeated_byte] + distance_lengths[0] + ll_lengths[256] <= 8:
+        # Push the stream-end code (256) as far back in the byte as possible.
+        while bits.bit_pos + ll_lengths[285] + distance_lengths[0] + ll_lengths[256] <= 8:
             bits.push_rev(*ll_codes[285])
             bits.push(*distance_codes[0])
             n += 258
