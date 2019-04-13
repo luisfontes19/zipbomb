@@ -143,20 +143,14 @@ def code_for_length(length):
     return base_code + ((length - base_length) >> num_bits), (length - base_length) & ((1<<num_bits)-1), num_bits
 
 # DEFLATE a string of a single repeated byte. Runs in two modes, depending on
-# whether you provide compressed_size or uncompressed_size.
-# compressed_size: decompresses to as many bytes as possible given an overall
+# whether you provide compressed_size or max_uncompressed_size.
+# compressed_size: decompresses to as many bytes as possible given an exact
 # compressed length.
-# uncompressed_size: decompresses to exactly that many bytes.
+# max_uncompressed_size: decompresses to no more than the given number of bytes,
+# but as close as possible.
 # Returns a tuple (compressed_data, uncompressed_size, crc_matrix).
-def bulk_deflate(repeated_byte, compressed_size=None, uncompressed_size=None, final=1):
-    assert (compressed_size is None and uncompressed_size is not None) or (compressed_size is not None and uncompressed_size is None)
-
-    if uncompressed_size is not None:
-        # Find a code for the number of bytes remaining after bulk compression of
-        # 258 bytes at a time. Subtract 1 because we must output a single literal
-        # byte.
-        excess = (uncompressed_size - 1) % 258
-        excess_code, excess_bits, excess_num_bits = code_for_length(excess)
+def bulk_deflate(repeated_byte, compressed_size=None, max_uncompressed_size=None, final=1):
+    assert (compressed_size is None and max_uncompressed_size is not None) or (compressed_size is not None and max_uncompressed_size is None)
 
     # Huffman tree for code lengths.
     code_length_lengths = {
@@ -165,9 +159,6 @@ def bulk_deflate(repeated_byte, compressed_size=None, uncompressed_size=None, fi
          2: 3,
         18: 1,
     }
-    if uncompressed_size is not None and excess_code is not None:
-        code_length_lengths[0] = 3
-        code_length_lengths[3] = 3
     code_length_codes = huffman_codes_from_lengths(code_length_lengths)
     # print_huffman_codes(code_length_codes, file=sys.stderr)
 
@@ -177,9 +168,6 @@ def bulk_deflate(repeated_byte, compressed_size=None, uncompressed_size=None, fi
                   256: 2, # end of stream
                   285: 1, # copy 285 bytes
     }
-    if uncompressed_size is not None and excess_code is not None:
-        ll_lengths[256] = 3
-        ll_lengths[excess_code] = 3
     ll_codes = huffman_codes_from_lengths(ll_lengths)
     # print_huffman_codes(ll_codes, file=sys.stderr)
 
@@ -244,20 +232,6 @@ def bulk_deflate(repeated_byte, compressed_size=None, uncompressed_size=None, fi
     bits.push_rev(*ll_codes[repeated_byte])
     n += 1
 
-    if uncompressed_size is not None:
-        # We need to be precise about the number of bytes that remain after bulk
-        # compression.
-        if excess_code is not None:
-            bits.push_rev(*ll_codes[excess_code])
-            bits.push(excess_bits, excess_num_bits)
-            bits.push(*distance_codes[0])
-            n += excess
-        else:
-            for _ in range(excess):
-                bits.push_rev(*ll_codes[repeated_byte])
-                n += 1
-        assert (uncompressed_size - n) % 258 == 0, (n, uncompressed_size)
-
     # Now every pair of 0 bits encodes 258 copies of repeated_byte.
     is_even = bits.bit_pos % 2 == 0
     # Including whatever zero bits remain at the end of the bit buffer.
@@ -268,10 +242,9 @@ def bulk_deflate(repeated_byte, compressed_size=None, uncompressed_size=None, fi
     bits = BitBuffer()
     if not is_even:
         bits.push(*distance_codes[0])
-    if uncompressed_size is not None:
-        # Push enough bytes to leave the body as a multiple of 1032.
-        assert (uncompressed_size - n) % 258 == 0, (n, uncompressed_size)
-        while (uncompressed_size - n) % 1032 != 0:
+    if max_uncompressed_size is not None:
+        # Push bytes to get within 258 of the max we are allowed.
+        while (max_uncompressed_size - n) % 1032 >= 258:
             bits.push_rev(*ll_codes[285])
             bits.push(*distance_codes[0])
             n += 258
@@ -284,8 +257,8 @@ def bulk_deflate(repeated_byte, compressed_size=None, uncompressed_size=None, fi
     bits.push_rev(*ll_codes[256])
     suffix = bits.bytes()
 
-    if uncompressed_size is not None:
-        num_zeroes = (uncompressed_size - n) // 1032
+    if max_uncompressed_size is not None:
+        num_zeroes = (max_uncompressed_size - n) // 1032
     else:
         num_zeroes = compressed_size - len(prefix) - len(suffix)
 
@@ -294,8 +267,8 @@ def bulk_deflate(repeated_byte, compressed_size=None, uncompressed_size=None, fi
 
     compressed_data = prefix + body + suffix
 
-    if uncompressed_size is not None:
-        assert n == uncompressed_size, (n, uncompressed_size)
+    if max_uncompressed_size is not None:
+        assert (max_uncompressed_size - n) < 258, (n, max_uncompressed_size)
     else:
         assert len(compressed_data) == compressed_size, (len(compressed_data), compressed_size)
 
@@ -393,8 +366,8 @@ def filename_for_index(i):
             break
     return bytes(letters)
 
-def write_zip_full_reuse(f, num_copies, compressed_size=None, uncompressed_size=None):
-    compressed_data, n, crc_matrix = bulk_deflate(CHOSEN_BYTE, compressed_size=compressed_size, uncompressed_size=uncompressed_size)
+def write_zip_full_reuse(f, num_copies, compressed_size=None, max_uncompressed_size=None):
+    compressed_data, n, crc_matrix = bulk_deflate(CHOSEN_BYTE, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
 
     main_crc = crc_matrix_apply(crc_matrix)
     main_file = LocalFileHeader(len(compressed_data), n, main_crc, filename_for_index(0))
@@ -415,7 +388,7 @@ def write_zip_full_reuse(f, num_copies, compressed_size=None, uncompressed_size=
 
     return offset
 
-def write_zip_quoted_reuse(f, num_additional, compressed_size=None, uncompressed_size=None):
+def write_zip_quoted_reuse(f, num_additional, compressed_size=None, max_uncompressed_size=None):
     class FileRecord:
         def __init__(self, header, data):
             self.header = header
@@ -424,7 +397,7 @@ def write_zip_quoted_reuse(f, num_additional, compressed_size=None, uncompressed
     # We build the file table backwards on a stack, starting with the file that
     # actually contains the bulk of the compressed data.
     files = []
-    compressed_data, n, crc_matrix = bulk_deflate(CHOSEN_BYTE, compressed_size=compressed_size, uncompressed_size=uncompressed_size)
+    compressed_data, n, crc_matrix = bulk_deflate(CHOSEN_BYTE, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
     header = LocalFileHeader(len(compressed_data), n, crc_matrix_apply(crc_matrix), filename_for_index(num_additional))
     files.append(FileRecord(header, compressed_data))
 
@@ -481,27 +454,27 @@ def write_zip_quoted_reuse(f, num_additional, compressed_size=None, uncompressed
     return offset
 
 def main():
-    opts, args = getopt.gnu_getopt(sys.argv[1:], "", ["alphabet=", "compressed-size=", "mode=", "numfiles=", "uncompressed-size="])
+    opts, args = getopt.gnu_getopt(sys.argv[1:], "", ["alphabet=", "compressed-size=", "max-uncompressed-size=", "mode=", "numfiles="])
     assert not args, args
     global FILENAME_ALPHABET
     compressed_size = None
-    uncompressed_size = None
+    max_uncompressed_size = None
     for o, a in opts:
         if o == "--alphabet":
             assert len(set(sorted(a))) == len(a), a
             FILENAME_ALPHABET = bytes(a, "utf-8")
         elif o == "--compressed-size":
             compressed_size = int(a)
+        elif o == "--max-uncompressed-size":
+            max_uncompressed_size = int(a)
         elif o == "--mode":
             mode = a
         elif o == "--numfiles":
             num_files = int(a)
-        elif o == "--uncompressed-size":
-            uncompressed_size = int(a)
     if mode == "full_overlap":
-        write_zip_full_reuse(sys.stdout.buffer, num_files, compressed_size=compressed_size, uncompressed_size=uncompressed_size)
+        write_zip_full_reuse(sys.stdout.buffer, num_files, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
     elif mode == "quoted_overlap":
-        write_zip_quoted_reuse(sys.stdout.buffer, num_files - 1, compressed_size=compressed_size, uncompressed_size=uncompressed_size)
+        write_zip_quoted_reuse(sys.stdout.buffer, num_files - 1, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
     else:
         raise ValueError("unknown mode")
 
