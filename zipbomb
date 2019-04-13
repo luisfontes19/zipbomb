@@ -310,12 +310,11 @@ MOD_DATE = 0x0548
 MOD_TIME = 0x6ca0
 
 class LocalFileHeader:
-    def __init__(self, compressed_size, uncompressed_size, crc, filename, extra_length):
+    def __init__(self, compressed_size, uncompressed_size, crc, filename):
         self.compressed_size = compressed_size
         self.uncompressed_size = uncompressed_size
         self.crc = crc
         self.filename = filename
-        self.extra_length = extra_length
 
     def serialize(self):
         # APPNOTE.TXT 4.3.7
@@ -330,7 +329,7 @@ class LocalFileHeader:
             self.compressed_size,   # compressed size
             self.uncompressed_size, # uncompressed size
             len(self.filename),     # filename length
-            self.extra_length,      # extra length
+            0,          # extra length
         ) + self.filename
 
 class CentralDirectoryHeader:
@@ -341,7 +340,6 @@ class CentralDirectoryHeader:
         self.uncompressed_size = template.uncompressed_size
         self.crc = template.crc
         self.filename = template.filename
-        self.extra_length = template.extra_length
 
     def serialize(self):
         # APPNOTE.TXT 4.3.12
@@ -357,13 +355,13 @@ class CentralDirectoryHeader:
             self.compressed_size,   # compressed size
             self.uncompressed_size, # uncompressed size
             len(self.filename),     # filename length
-            self.extra_length,      # extra length
+            0,          # extra length
             0,          # file comment length
             0,          # disk number where file starts
             0,          # internal file attributes
             0,          # external file attributes
             self.local_file_header_offset,  # offset of local file header
-        ) + self.filename + (struct.pack("<HH", 0x000d, max(0, self.extra_length - 4))+b"\x00"*65535)[:self.extra_length]
+        ) + self.filename
 
 class EndOfCentralDirectory:
     def __init__(self, cd_num_entries, cd_size, cd_offset):
@@ -399,7 +397,7 @@ def write_zip_full_reuse(f, num_copies, compressed_size=None, uncompressed_size=
     compressed_data, n, crc_matrix = bulk_deflate(CHOSEN_BYTE, compressed_size=compressed_size, uncompressed_size=uncompressed_size)
 
     main_crc = crc_matrix_apply(crc_matrix)
-    main_file = LocalFileHeader(len(compressed_data), n, main_crc, filename_for_index(0), 0)
+    main_file = LocalFileHeader(len(compressed_data), n, main_crc, filename_for_index(0))
 
     offset = 0
     main_file_offset = offset
@@ -427,7 +425,7 @@ def write_zip_quoted_reuse(f, num_additional, compressed_size=None, uncompressed
     # actually contains the bulk of the compressed data.
     files = []
     compressed_data, n, crc_matrix = bulk_deflate(CHOSEN_BYTE, compressed_size=compressed_size, uncompressed_size=uncompressed_size)
-    header = LocalFileHeader(len(compressed_data), n, crc_matrix_apply(crc_matrix), filename_for_index(num_additional), 0)
+    header = LocalFileHeader(len(compressed_data), n, crc_matrix_apply(crc_matrix), filename_for_index(num_additional))
     files.append(FileRecord(header, compressed_data))
 
     crc_matrix = precompute_crc_matrix_repeated(b"\x00", n)
@@ -438,48 +436,31 @@ def write_zip_quoted_reuse(f, num_additional, compressed_size=None, uncompressed
         next_file = files[-1]
         next_header_bytes = next_file.header.serialize()
 
-        if len(next_header_bytes) + next_file.header.extra_length + next_file.header.uncompressed_size <= 0xffffffff:
-            # We have room to quote the following Local File Header.
-            assert next_file.header.extra_length == 0, next_file.header.extra_length
+        # Here we do a crc32_combine operation to compute the CRC of
+        # prefix+remainder, knowing crc32(prefix), crc32(remainder), and a
+        # matrix that computes the effect of len(remainder) 0x00 bytes.
+        # Basically it's the xor of crc32(remainder) and crc32(prefix + zeroes),
+        # where the latter quantity is the result of applying the matrix to
+        # crc32(prefix).
+        crc1 = binascii.crc32(next_header_bytes)
+        crc2 = next_file.header.crc
+        # Undo the pre- and post-conditioning that crc_matrix_apply does,
+        # because crc1 and crc2 are already conditioned.
+        new_crc = crc_matrix_apply(crc_matrix, crc1 ^ 0xffffffff) ^ 0xffffffff ^ crc2
+        # Next file will have an additional len(next_header_bytes) accumulated
+        # into crc_matrix.
+        crc_matrix = matrix_mul(crc_matrix, precompute_crc_matrix_repeated(b"\x00", len(next_header_bytes)))
 
-            # Here we do a crc32_combine operation to compute the CRC of
-            # prefix+remainder, knowing crc32(prefix), crc32(remainder), and a
-            # matrix that computes the effect of len(remainder) 0x00 bytes.
-            # Basically it's the xor of crc32(remainder) and crc32(prefix + zeroes),
-            # where the latter quantity is the result of applying the matrix to
-            # crc32(prefix).
-            crc1 = binascii.crc32(next_header_bytes)
-            crc2 = next_file.header.crc
-            # Undo the pre- and post-conditioning that crc_matrix_apply does,
-            # because crc1 and crc2 are already conditioned.
-            new_crc = crc_matrix_apply(crc_matrix, crc1 ^ 0xffffffff) ^ 0xffffffff ^ crc2
-            # Next file will have an additional len(next_header_bytes) accumulated
-            # into crc_matrix.
-            crc_matrix = matrix_mul(crc_matrix, precompute_crc_matrix_repeated(b"\x00", len(next_header_bytes)))
-
-            # Place a non-final non-compressed DEFLATE block (BFINAL=0, BTYPE=00)
-            # that quotes the following Local File Header and joins up with the
-            # DEFLATE stream that it contains.
-            quote = struct.pack("<BHH", 0x00, len(next_header_bytes), len(next_header_bytes) ^ 0xffff)
-            header = LocalFileHeader(
-                len(quote) + len(next_header_bytes) + next_file.header.extra_length + next_file.header.compressed_size,
-                len(next_header_bytes) + next_file.header.extra_length + next_file.header.uncompressed_size,
-                new_crc,
-                filename_for_index(num_additional - i - 1),
-                0,
-            )
-        else:
-            # This file has no room to grow; instead, quote the following Local
-            # File Header inside this one's "extra" field. This file will have
-            # the same size as the following one.
-            quote = struct.pack("<HH", 0x000d, len(next_header_bytes) + next_file.header.extra_length - 4)
-            header = LocalFileHeader(
-                next_file.header.compressed_size,
-                next_file.header.uncompressed_size,
-                next_file.header.crc,
-                filename_for_index(num_additional - i - 1),
-                len(quote) + len(next_header_bytes) + next_file.header.extra_length,
-            )
+        # Place a non-final non-compressed DEFLATE block (BFINAL=0, BTYPE=00)
+        # that quotes the following Local File Header and joins up with the
+        # DEFLATE stream that it contains.
+        quote = struct.pack("<BHH", 0x00, len(next_header_bytes), len(next_header_bytes) ^ 0xffff)
+        header = LocalFileHeader(
+            len(quote) + len(next_header_bytes) + next_file.header.compressed_size,
+            len(next_header_bytes) + next_file.header.uncompressed_size,
+            new_crc,
+            filename_for_index(num_additional - i - 1),
+        )
         files.append(FileRecord(header, quote))
 
     central_directory = []
