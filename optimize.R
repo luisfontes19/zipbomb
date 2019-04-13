@@ -57,30 +57,30 @@ triangular_sum_filename_lengths <- Vectorize(function(n) {
 })
 
 zipped_size_given_compressed_size <- function(compressed_size, num_additional) {
-	size <- 0
-	size <- size + num_additional * 5 # 5 is DEFLATE quoting overhead
-	size <- size + compressed_size
-	size <- size + 30 * (1 + num_additional) # Local File Headers
-	size <- size + 46 * (1 + num_additional) # Central Directory Headers
-	size <- size + 2 * sum_filename_lengths(1 + num_additional) # Filenames in Local File Headers and Central Directory Headers
-	size <- size + 22 # EOCD
-	size
+	zipped_size <- 0
+	zipped_size <- zipped_size + num_additional * 5 # 5 is DEFLATE quoting overhead
+	zipped_size <- zipped_size + compressed_size
+	zipped_size <- zipped_size + 30 * (1 + num_additional) # Local File Headers
+	zipped_size <- zipped_size + 46 * (1 + num_additional) # Central Directory Headers
+	zipped_size <- zipped_size + 2 * sum_filename_lengths(1 + num_additional) # Filenames in Local File Headers and Central Directory Headers
+	zipped_size <- zipped_size + 22 # EOCD
+	zipped_size
 }
 
-unzipped_size <- function(compressed_size, num_additional) {
-	size <- 0
-	size <- size + (1 + 1032 + compressed_size * 1032) * (1 + num_additional)
-	size <- size + 30 * (num_additional * (num_additional + 1)) / 2
-	size <- size + triangular_sum_filename_lengths(1 + num_additional)
-	size
+unzipped_size_given_compressed_size <- function(compressed_size, num_additional) {
+	unzipped_size <- 0
+	unzipped_size <- unzipped_size + (1 + 1032 + compressed_size * 1032) * (1 + num_additional)
+	unzipped_size <- unzipped_size + 30 * (num_additional * (num_additional + 1)) / 2
+	unzipped_size <- unzipped_size + triangular_sum_filename_lengths(1 + num_additional)
+	unzipped_size
 }
 
-unzipped_size_from_uncompressed <- function(uncompressed_size, num_additional) {
-	size <- 0
-	size <- size + uncompressed_size * (1 + num_additional)
-	size <- size + 30 * (num_additional * (num_additional + 1)) / 2
-	size <- size + triangular_sum_filename_lengths(1 + num_additional)
-	size
+unzipped_size_given_uncompressed_size <- function(uncompressed_size, num_additional) {
+	unzipped_size <- 0
+	unzipped_size <- unzipped_size + uncompressed_size * (1 + num_additional)
+	unzipped_size <- unzipped_size + 30 * (num_additional * (num_additional + 1)) / 2
+	unzipped_size <- unzipped_size + triangular_sum_filename_lengths(1 + num_additional)
+	unzipped_size
 }
 
 additional_size <- function(num_additional) {
@@ -90,7 +90,7 @@ additional_size <- function(num_additional) {
 optimize_for_zipped_size <- function(zipped_size) {
 	avail <- zipped_size - 30 - 46 - 22
 	num_additional <- with(list(n=0:(avail/(30+5+46))), {
-		which.max(unzipped_size(avail - additional_size(n), n))
+		which.max(unzipped_size_given_compressed_size(avail - additional_size(n), n))
 	})
 	compressed_size = avail - additional_size(num_additional)
 	list(compressed_size=compressed_size, num_additional=num_additional)
@@ -99,7 +99,7 @@ optimize_for_zipped_size <- function(zipped_size) {
 cat("\n\noptimize zbsm.zip\n");
 params <- optimize_for_zipped_size(42374)
 params
-zipped_size_given_compressed_size(params$compressed_size, params$num_additional)
+print(c("zipped size", zipped_size_given_compressed_size(params$compressed_size, params$num_additional)))
 
 cat("\n\noptimize zblg.zip\n");
 # 2^32 - 1 is the maximum representable file size.
