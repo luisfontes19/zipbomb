@@ -42,10 +42,10 @@ triangular_sum_filename_lengths <- Vectorize(function(n) {
 	s
 })
 
-zipped_size <- function(compressed_size, num_additional) {
+zipped_size_given_compressed_size <- function(compressed_size, num_additional) {
 	size <- 0
 	size <- size + num_additional * 5 # 5 is DEFLATE quoting overhead
-	size <- size + 16 + compressed_size # 16 is DEFLATE compression overhead
+	size <- size + compressed_size
 	size <- size + 30 * (1 + num_additional) # Local File Headers
 	size <- size + 46 * (1 + num_additional) # Central Directory Headers
 	size <- size + 2 * sum_filename_lengths(1 + num_additional) # Filenames in Local File Headers and Central Directory Headers
@@ -73,7 +73,7 @@ additional_size <- function(num_additional) {
 	num_additional * (30 + 46 + 5) + 2 * sum_filename_lengths(1 + num_additional)
 }
 
-optimize_unzipped_size <- function(zipped_size) {
+optimize_for_zipped_size <- function(zipped_size) {
 	avail <- zipped_size - 30 - 46 - 22
 	num_additional <- with(list(n=0:(avail/(30+5+46))), {
 		which.max(unzipped_size(avail - additional_size(n), n))
@@ -82,23 +82,12 @@ optimize_unzipped_size <- function(zipped_size) {
 	list(compressed_size=compressed_size, num_additional=num_additional)
 }
 
-x <- data.frame(zipped_size=c(), unzipped_size=c(), name=c())
-for (n in seq(200, 10000000, 500000)) {
-	print(n)
-	params <- optimize(n)
-	x <- rbind(x, data.frame(zipped_size=n, unzipped_size=unzipped_size(params$compressed_size, params$num_additional), name="comp"))
-	params <- optimize_uncompressed(n)
-	x <- rbind(x, data.frame(zipped_size=n, unzipped_size=unzipped_size_from_uncompressed(params$uncompressed_size, params$num_additional), name="uncomp"))
-}
-
-library(ggplot2)
-ggplot(x, aes(zipped_size, unzipped_size, color=name)) + geom_point()
-# plot(x$zipped_size, x$unzipped_size)
-
-params <- optimize(42374)
+cat("\n\noptimize zbsm.zip\n");
+params <- optimize_for_zipped_size(42374)
 params
-zipped_size(params$compressed_size, params$num_additional)
+zipped_size_given_compressed_size(params$compressed_size, params$num_additional)
 
+cat("\n\noptimize zblg.zip\n");
 # 2^32 - 1 is the maximum representable file size.
 # 30*65534 is the file size increase from quoting 65534 Local File Headers.
 # sum_filename_lengths(65534) - sum_filename_lengths(1) is the file size increase from quoting all but the first filename.
