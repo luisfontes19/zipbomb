@@ -11,3 +11,5 @@ zbsm.zip:
 
 zblg.zip:
 	$(ZIPBOMB) --mode=quoted_overlap --numfiles=65535 --uncompressed-size=4292788492 > "$@"
+	# better
+	# $(ZIPBOMB) --mode=quoted_overlap --numfiles=65535 --compressed-size=4159693 > "$@"
