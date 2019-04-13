@@ -138,6 +138,14 @@ cat("\n\noptimize zblg.zip\n");
 # 30*65534 is the file size increase from quoting 65534 Local File Headers.
 # sum_filename_lengths(65534) - sum_filename_lengths(1) is the file size increase from quoting all but the first filename.
 max_uncompressed_size <- 2^32 - 1 - (30*65534 + sum_filename_lengths(65535) - sum_filename_lengths(1))
+# The compression ratio is not monotonic in max_uncompressed_size. Omitting one
+# pair of 0 bits decreases the zipped size by 258*65535 ≈ 17 MB, but it is
+# worth it if omitting those bits saves one byte in the DEFLATE suffix.
+# So try our absolute maximum limit minus 0, 258, 516, 774.
+candidates <- seq(max_uncompressed_size, max_uncompressed_size-1032, -258)
+max_uncompressed_size <- candidates[[which.max(sapply(candidates, function(x) {
+	unzipped_size_given_max_uncompressed_size(x, 65534) / zipped_size_given_max_uncompressed_size(x, 65534)
+}))]]
 list(max_uncompressed_size=max_uncompressed_size, num_additional=65534)
 print(c("zipped size", zipped_size_given_max_uncompressed_size(max_uncompressed_size, 65534)))
 print(c("unzipped size", unzipped_size_given_max_uncompressed_size(max_uncompressed_size, 65534)))
