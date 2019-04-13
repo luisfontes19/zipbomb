@@ -79,12 +79,39 @@ unzipped_size_given_compressed_size <- function(compressed_size, num_additional)
 	unzipped_size
 }
 
-unzipped_size_given_uncompressed_size <- function(uncompressed_size, num_additional) {
+zipped_size_given_max_uncompressed_size <- function(max_uncompressed_size, num_additional) {
+	uncompressed_size <- uncompressed_size_given_max_uncompressed_size(max_uncompressed_size)
+	compressed_size <- 0
+	# Account for prefix.
+	uncompressed_size <- uncompressed_size - 1 - 258 - 258
+	compressed_size <- compressed_size + 15
+	# We have room for 2 258 blocks in the suffix without requiring an extra byte.
+	if (uncompressed_size %% 1032 <= 258*2) {
+		compressed_size <- compressed_size + 1 # suffix is 1 byte
+	} else {
+		compressed_size <- compressed_size + 2 # suffix is 2 byte
+	}
+	compressed_size <- compressed_size + uncompressed_size %/% 1032
+	zipped_size_given_compressed_size(compressed_size, num_additional)
+}
+
+unzipped_size_given_max_uncompressed_size <- function(max_uncompressed_size, num_additional) {
+	uncompressed_size <- uncompressed_size_given_max_uncompressed_size(max_uncompressed_size)
 	unzipped_size <- 0
 	unzipped_size <- unzipped_size + uncompressed_size * (1 + num_additional)
 	unzipped_size <- unzipped_size + 30 * (num_additional * (num_additional + 1)) / 2
 	unzipped_size <- unzipped_size + triangular_sum_filename_lengths(1 + num_additional)
 	unzipped_size
+}
+
+# bulk_deflate will get within 258 of max_uncompressed_size (accounting for the
+# 1 literal byte at the beginning).
+uncompressed_size_given_max_uncompressed_size <- function(max_uncompressed_size) {
+	uncompressed_size <- max_uncompressed_size
+	uncompressed_size <- uncompressed_size - 1
+	uncompressed_size <- uncompressed_size - (uncompressed_size %% 258)
+	uncompressed_size <- uncompressed_size + 1
+	uncompressed_size
 }
 
 additional_size <- function(num_additional) {
@@ -104,9 +131,13 @@ cat("\n\noptimize zbsm.zip\n");
 params <- optimize_for_zipped_size(42374)
 params
 print(c("zipped size", zipped_size_given_compressed_size(params$compressed_size, params$num_additional)))
+print(c("unzipped size", unzipped_size_given_compressed_size(params$compressed_size, params$num_additional)))
 
 cat("\n\noptimize zblg.zip\n");
 # 2^32 - 1 is the maximum representable file size.
 # 30*65534 is the file size increase from quoting 65534 Local File Headers.
 # sum_filename_lengths(65534) - sum_filename_lengths(1) is the file size increase from quoting all but the first filename.
-2^32 - 1 - (30*65534 + sum_filename_lengths(65535) - sum_filename_lengths(1))
+max_uncompressed_size <- 2^32 - 1 - (30*65534 + sum_filename_lengths(65535) - sum_filename_lengths(1))
+list(max_uncompressed_size=max_uncompressed_size, num_additional=65534)
+print(c("zipped size", zipped_size_given_max_uncompressed_size(max_uncompressed_size, 65534)))
+print(c("unzipped size", unzipped_size_given_max_uncompressed_size(max_uncompressed_size, 65534)))
