@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import binascii
+import getopt
 import math
 import struct
 import sys
@@ -384,12 +385,12 @@ class EndOfCentralDirectory:
         )
 
 
-FILENAME_LETTERS = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+FILENAME_ALPHABET = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 def filename_for_index(i):
     letters = []
     while True:
-        letters.insert(0, FILENAME_LETTERS[i % len(FILENAME_LETTERS)])
-        i = i // len(FILENAME_LETTERS) - 1
+        letters.insert(0, FILENAME_ALPHABET[i % len(FILENAME_ALPHABET)])
+        i = i // len(FILENAME_ALPHABET) - 1
         if i < 0:
             break
     return bytes(letters)
@@ -498,27 +499,30 @@ def write_zip_quoted_reuse(f, num_additional, compressed_size=None, uncompressed
 
     return offset
 
+def main():
+    opts, args = getopt.gnu_getopt(sys.argv[1:], "", ["alphabet=", "compressed-size=", "mode=", "numfiles=", "uncompressed-size="])
+    assert not args, args
+    global FILENAME_ALPHABET
+    compressed_size = None
+    uncompressed_size = None
+    for o, a in opts:
+        if o == "--alphabet":
+            assert len(set(sorted(a))) == len(a), a
+            FILENAME_ALPHABET = bytes(a, "utf-8")
+        elif o == "--compressed-size":
+            compressed_size = int(a)
+        elif o == "--mode":
+            mode = a
+        elif o == "--numfiles":
+            num_files = int(a)
+        elif o == "--uncompressed-size":
+            uncompressed_size = int(a)
+    if mode == "full_overlap":
+        write_zip_full_reuse(sys.stdout.buffer, num_files, compressed_size=compressed_size, uncompressed_size=uncompressed_size)
+    elif mode == "quoted_overlap":
+        write_zip_quoted_reuse(sys.stdout.buffer, num_files - 1, compressed_size=compressed_size, uncompressed_size=uncompressed_size)
+    else:
+        raise ValueError("unknown mode")
 
-# write_zip_full_reuse(sys.stdout.buffer, 442, compressed_size=21125+16)
-# write_zip_quoted_reuse(sys.stdout.buffer, 250, compressed_size=21094)
-# write_zip_quoted_reuse(sys.stdout.buffer, 65534, uncompressed_size=4292788492)
-
-# S compressed file data
-# N * 30 Local File Headers
-# N * 46 Central Directory Headers
-# N * 2 * ~2 filenames
-# (N-1) * 5 quotes
-# 16 bytes DEFLATE overhead (represents 1033 bytes itself)
-#
-# maximize (1033 + (S - 16) * 1032) * N + 32 * (N - 1)
-# subject to
-#   16 + S + N * (30 + 46 + 4) + (N-1)*5 + 22 <= 42374
-#
-# max (33 + (S - 15) * 1032) * N - 32
-#     (1032*S - 15447) * N
-#     (1032*(42331 - 85*N) - 15447) * N
-#     43670115*N - 87720*N*N
-#     => max integer N at N=250 => S=21081
-#
-#   S = 42331 - 85*N
-#   N = (42331 - S)/85
+if __name__ == "__main__":
+    main()
