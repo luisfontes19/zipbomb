@@ -68,8 +68,12 @@ zipped_size_given_compressed_size <- function(compressed_size, num_additional) {
 }
 
 unzipped_size_given_compressed_size <- function(compressed_size, num_additional) {
+	# This relies on specific knowledge of how bulk_deflate works, for
+	# example that the prefix and suffix are together 16 bytes long and
+	# automatically represent 1033 uncompressed bytes by themselves
+	# (1+258+258 in the prefix and 258+258 in the suffix).
 	unzipped_size <- 0
-	unzipped_size <- unzipped_size + (1 + 1032 + compressed_size * 1032) * (1 + num_additional)
+	unzipped_size <- unzipped_size + (1033 + (compressed_size-16) * 1032) * (1 + num_additional)
 	unzipped_size <- unzipped_size + 30 * (num_additional * (num_additional + 1)) / 2
 	unzipped_size <- unzipped_size + triangular_sum_filename_lengths(1 + num_additional)
 	unzipped_size
