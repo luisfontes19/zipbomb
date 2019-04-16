@@ -279,6 +279,10 @@ def bulk_deflate(repeated_byte, compressed_size=None, max_uncompressed_size=None
 # 8 - The file is Deflated
 COMPRESSION_METHOD_DEFLATE = 8
 
+# APPNOTE.TXT 4.4.3.2
+# 2.0 - File is compressed using Deflate compression
+ZIP_VERSION = 20
+
 MOD_DATE = 0x0548
 MOD_TIME = 0x6ca0
 
@@ -293,7 +297,7 @@ class LocalFileHeader:
         # APPNOTE.TXT 4.3.7
         return struct.pack("<LHHHHHLLLHH",
             0x04034b50, # signature
-            20,         # zip version 2.0
+            ZIP_VERSION,    # version needed to extract
             0,          # flags
             COMPRESSION_METHOD_DEFLATE, # compression method
             MOD_TIME,   # modification time
@@ -318,8 +322,8 @@ class CentralDirectoryHeader:
         # APPNOTE.TXT 4.3.12
         return struct.pack("<LHHHHHHLLLHHHHHLL",
             0x02014b50, # signature
-            20,         # version made by
-            0,          # version needed to extract
+            (0<<8) | ZIP_VERSION,   # version made by (0 - MS-DOS/FAT compatible)
+            ZIP_VERSION,            # version needed to extract
             0,          # flags
             COMPRESSION_METHOD_DEFLATE, # compression method
             MOD_TIME,   # modification time
