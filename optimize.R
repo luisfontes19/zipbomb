@@ -192,7 +192,22 @@ print(c("zipped size", zipped_size_given_max_uncompressed_size(max_uncompressed_
 print(c("unzipped size", unzipped_size_given_max_uncompressed_size(max_uncompressed_size, 65534)))
 
 cat("\n\noptimize zbxl.zip\n");
-params <- optimize_for_zipped_size_zip64(20*1024*1024)
+# Binary search for zipped_size that gets an unzipped_size as close as possible
+# to the full recursive unzipped size of 42.zip.
+low <- 10*1024*1024
+high <- 100*1024*1024
+target <- 4507981343026016
+while (high - low > 1) {
+	print(c(low, high))
+	mid <- (low + high) %/% 2
+	params <- optimize_for_zipped_size_zip64(mid)
+	unzipped_size <- unzipped_size_given_compressed_size_zip64(params$compressed_size, params$num_additional)
+	if (unzipped_size < target) {
+		low <- mid
+	} else {
+		high <- mid - 1
+	}
+}
 params
 print(c("zipped size", zipped_size_given_compressed_size_zip64(params$compressed_size, params$num_additional)))
 print(c("unzipped size", unzipped_size_given_compressed_size_zip64(params$compressed_size, params$num_additional)))
