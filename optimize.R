@@ -205,17 +205,18 @@ cat("\n\noptimize zbxl.zip\n");
 low <- 10*1024*1024
 high <- 100*1024*1024
 target <- 4507981343026016
-while (high - low > 1) {
+while (low < high) {
 	print(c(low, high))
-	mid <- (low + high) %/% 2
+	mid <- floor((low + high) / 2)
 	params <- optimize_for_zipped_size_zip64(mid)
 	unzipped_size <- unzipped_size_given_compressed_size_zip64(params$compressed_size, params$num_additional)
 	if (unzipped_size < target) {
-		low <- mid
+		low <- mid + 1
 	} else {
-		high <- mid - 1
+		high <- mid
 	}
 }
+params <- optimize_for_zipped_size_zip64(low)
 params
 print(c("zipped size", zipped_size_given_compressed_size_zip64(params$compressed_size, params$num_additional)))
 print(c("unzipped size", unzipped_size_given_compressed_size_zip64(params$compressed_size, params$num_additional)))
@@ -225,22 +226,23 @@ print(c("unzipped size", unzipped_size_given_compressed_size_zip64(params$compre
 # # to the full recursive unzipped size of 42.zip.
 # low <- 10*1024*1024
 # high <- NA
-# while (is.na(high) || high - low > 1) {
+# while (is.na(high) || low < high) {
 # 	if (is.na(high)) {
 # 		mid <- low * 2
 # 	} else {
-# 		mid <- (low + high) %/% 2
+# 		mid <- floor((low + high) / 2)
 # 	}
 # 	params <- optimize_for_zipped_size_zip64(mid)
 # 	unzipped_size <- unzipped_size_given_compressed_size_zip64(params$compressed_size, params$num_additional)
 # 	print(c(low, mid, high))
 # 	print(log(unzipped_size, 2))
 # 	if (log(unzipped_size, 2) < 64) {
-# 		low <- mid
+# 		low <- mid + 1
 # 	} else {
-# 		high <- mid - 1
+# 		high <- mid
 # 	}
 # }
+# params <- optimize_for_zipped_size_zip64(low)
 # params
 # print(c("zipped size", zipped_size_given_compressed_size_zip64(params$compressed_size, params$num_additional)))
 # print(c("unzipped size", unzipped_size_given_compressed_size_zip64(params$compressed_size, params$num_additional)))
