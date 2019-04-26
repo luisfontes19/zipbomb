@@ -11,3 +11,5 @@ zbsm.zip:
 
 zblg.zip:
 	$(ZIPBOMB) --mode=quoted_overlap --numfiles=65535 --max-uncompressed-size=4292788491 > "$@"
+
+.DELETE_ON_ERROR:
