@@ -282,6 +282,8 @@ COMPRESSION_METHOD_DEFLATE = 8
 # APPNOTE.TXT 4.4.3.2
 # 2.0 - File is compressed using Deflate compression
 ZIP_VERSION = 20
+# 4.5 - File uses ZIP64 format extensions
+ZIP64_VERSION = 45
 
 MOD_DATE = 0x0548
 MOD_TIME = 0x6ca0
@@ -293,21 +295,36 @@ class LocalFileHeader:
         self.crc = crc
         self.filename = filename
 
-    def serialize(self):
+    def serialize(self, zip64=False):
+        # See the comment about the Zip64 extra field in
+        # CentralDirectoryHeader.serialize. Here in the local file header, we
+        # have no local_file_header_offset, and APPNOTE.TXT 4.5.3 says that we
+        # must include both uncompressed_size and compressed_size, even if one
+        # of them is not so big as to require Zip64.
+        zip64_extra = b""
+        if self.uncompressed_size > 0xffffffff or self.compressed_size > 0xfffffffe:
+            assert zip64    # Disallow unless Zip64 was requested.
+            zip64_extra = struct.pack("<HHQQ",
+                0x0001, # tag type (Zip64)
+                16,     # tag size
+                self.uncompressed_size, # uncompressed size
+                self.compressed_size,   # compressed size
+            )
+
         # APPNOTE.TXT 4.3.7
         return struct.pack("<LHHHHHLLLHH",
             0x04034b50, # signature
-            ZIP_VERSION,    # version needed to extract
+            zip64_extra and ZIP64_VERSION or ZIP_VERSION,   # version needed to extract
             0,          # flags
             COMPRESSION_METHOD_DEFLATE, # compression method
             MOD_TIME,   # modification time
             MOD_DATE,   # modification date
             self.crc,   # CRC-32
-            self.compressed_size,   # compressed size
-            self.uncompressed_size, # uncompressed size
+            zip64_extra and 0xffffffff or self.compressed_size,     # compressed size
+            zip64_extra and 0xffffffff or self.uncompressed_size,   # uncompressed size
             len(self.filename),     # filename length
-            0,          # extra length
-        ) + self.filename
+            len(zip64_extra),       # extra length
+        ) + self.filename + zip64_extra
 
 class CentralDirectoryHeader:
     # template is a LocalFileHeader instance.
@@ -318,27 +335,70 @@ class CentralDirectoryHeader:
         self.crc = template.crc
         self.filename = template.filename
 
-    def serialize(self):
+    def serialize(self, zip64=False):
+        # The fields of the Zip64 extra field are optional and only required
+        # when the corresponding field in the central directory header is
+        # 0xffffffff (see APPNOTE.TXT 4.5.3). But for compatibility, we make it
+        # so that the existence of a later field implies the existence of all
+        # earlier fields—Go archive/zip before Go 1.6 incorrectly omits the
+        # 0xffffffff check. https://github.com/golang/go/issues/13367
+        #
+        # Also, we set the threshold at 0xffffffff for uncompressed_size but
+        # 0xfffffffe for compressed_size and local_file_header_offset, for
+        # compatibility with Go archive/zip which (wrongly, IMO) requires a
+        # Zip64 extra field to be present when either of the two latter fields
+        # is exactly 0xffffffff.
+        # https://github.com/golang/go/issues/31692
+        zip64_uncompressed_size = False
+        zip64_compressed_size = False
+        zip64_local_file_header_offset = False
+        if self.uncompressed_size > 0xffffffff:
+            zip64_uncompressed_size = True
+        if self.compressed_size > 0xfffffffe:
+            zip64_uncompressed_size = True
+            zip64_compressed_size = True
+        if self.local_file_header_offset > 0xfffffffe:
+            zip64_uncompressed_size = True
+            zip64_compressed_size = True
+            zip64_local_file_header_offset = True
+        zip64_extra = b""
+        if zip64_uncompressed_size:
+            zip64_extra += struct.pack("<Q", self.uncompressed_size)
+        if zip64_compressed_size:
+            zip64_extra += struct.pack("<Q", self.compressed_size)
+        if zip64_local_file_header_offset:
+            zip64_extra += struct.pack("<Q", self.local_file_header_offset)
+        if zip64_extra:
+            assert zip64    # Disallow unless Zip64 was requested.
+            zip64_extra = struct.pack("<HH",
+                0x0001,             # tag type (Zip64)
+                len(zip64_extra),   # tag size
+            ) + zip64_extra
+
         # APPNOTE.TXT 4.3.12
+        # Even in Zip64 mode, we assume that the compressed size and local file
+        # header offset fit in 32 bits, for a small size optimization.
+        assert self.compressed_size < 0xffffffff, self.compressed_size
+        assert self.local_file_header_offset < 0xffffffff, self.local_file_header_offset
         return struct.pack("<LHHHHHHLLLHHHHHLL",
             0x02014b50, # signature
-            (0<<8) | ZIP_VERSION,   # version made by (0 - MS-DOS/FAT compatible)
-            ZIP_VERSION,            # version needed to extract
+            (0<<8) | (zip64 and ZIP64_VERSION or ZIP_VERSION),  # version made by (0 - MS-DOS/FAT compatible)
+            zip64 and ZIP64_VERSION or ZIP_VERSION,             # version needed to extract
             0,          # flags
             COMPRESSION_METHOD_DEFLATE, # compression method
             MOD_TIME,   # modification time
             MOD_DATE,   # modification date
             self.crc,   # CRC-32
-            self.compressed_size,   # compressed size
-            self.uncompressed_size, # uncompressed size
+            zip64_compressed_size and 0xffffffff or self.compressed_size,       # compressed size
+            zip64_uncompressed_size and 0xffffffff or self.uncompressed_size,   # uncompressed size
             len(self.filename),     # filename length
-            0,          # extra length
+            len(zip64_extra),       # extra length
             0,          # file comment length
             0,          # disk number where file starts
             0,          # internal file attributes
             0,          # external file attributes
-            self.local_file_header_offset,  # offset of local file header
-        ) + self.filename
+            zip64_local_file_header_offset and 0xffffffff or self.local_file_header_offset, # offset of local file header
+        ) + self.filename + zip64_extra
 
 class EndOfCentralDirectory:
     def __init__(self, cd_num_entries, cd_size, cd_offset):
@@ -346,18 +406,48 @@ class EndOfCentralDirectory:
         self.cd_size = cd_size
         self.cd_offset = cd_offset
 
-    def serialize(self):
-        # APPNOTE.TXT 4.3.16
-        return struct.pack("<LHHHHLLH",
+    def serialize(self, zip64=False):
+        result = []
+        need_zip64 = self.cd_num_entries > 0xffff or self.cd_size > 0xffffffff or self.cd_offset > 0xffffffff
+        if need_zip64:
+            assert zip64    # Disallow unless Zip64 was requested.
+            # APPNOTE.TXT 4.3.14 Zip64 end of central directory record
+            # We use the "Version 1" Zip64 EOCD (Zip version 4.5). "Version 2"
+            # would be indicated by a Zip version of 6.2 or greater. APPNOTE.TXT
+            # 7.3.3: "The layout of the Zip64 End of Central Directory record
+            # for all versions starting with 6.2 of this specification will
+            # follow the Version 2 format."
+            result.append(struct.pack("<LQHHLLQQQQ",
+                0x06064b50, # signature
+                44,         # size of remainder of Zip64 EOCD
+                ZIP64_VERSION,  # version made by
+                ZIP64_VERSION,  # version needed to extract
+                0,          # number of this disk
+                0,          # disk of central directory
+                self.cd_num_entries,    # number of central directory entries on this disk
+                self.cd_num_entries,    # number of central directory entries total
+                self.cd_size,   # size of central directory
+                self.cd_offset, # offset to central directory
+            ))
+            # APPNOTE.TXT 4.3.15 Zip64 end of central directory locator
+            result.append(struct.pack("<LLQL",
+                0x07064b50, # signature
+                0,          # number of disk with Zip64 EOCD
+                self.cd_size + self.cd_offset,  # offset of Zip64 EOCD
+                1,          # total number of disks
+            ))
+        # APPNOTE.TXT 4.3.16 End of central directory record
+        result.append(struct.pack("<LHHHHLLH",
             0x06054b50, # signature
             0,          # number of this disk
             0,          # disk of central directory
-            self.cd_num_entries,    # number of central directory entries on this disk
-            self.cd_num_entries,    # number of central directory entries total
-            self.cd_size,   # size of central directory
-            self.cd_offset, # offset of central directory
+            need_zip64 and 0xffff or self.cd_num_entries,   # number of central directory entries on this disk
+            need_zip64 and 0xffff or self.cd_num_entries,   # number of central directory entries total
+            need_zip64 and 0xffffffff or self.cd_size,      # size of central directory
+            need_zip64 and 0xffffffff or self.cd_offset,    # offset of central directory
             0,          # comment length
-        )
+        ))
+        return b"".join(result)
 
 
 FILENAME_ALPHABET = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -370,7 +460,7 @@ def filename_for_index(i):
             break
     return bytes(letters)
 
-def write_zip_full_reuse(f, num_copies, compressed_size=None, max_uncompressed_size=None):
+def write_zip_full_reuse(f, num_copies, compressed_size=None, max_uncompressed_size=None, zip64=False):
     compressed_data, n, crc_matrix = bulk_deflate(CHOSEN_BYTE, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
 
     main_crc = crc_matrix_apply(crc_matrix)
@@ -378,21 +468,21 @@ def write_zip_full_reuse(f, num_copies, compressed_size=None, max_uncompressed_s
 
     offset = 0
     main_file_offset = offset
-    offset += f.write(main_file.serialize())
+    offset += f.write(main_file.serialize(zip64=zip64))
     offset += f.write(compressed_data)
 
     cd_offset = offset
     for i in range(num_copies):
         cd_header = CentralDirectoryHeader(main_file_offset, main_file)
         cd_header.filename = filename_for_index(i)
-        offset += f.write(cd_header.serialize())
+        offset += f.write(cd_header.serialize(zip64=zip64))
     cd_size = offset - cd_offset
 
-    offset += f.write(EndOfCentralDirectory(num_copies, cd_size, cd_offset).serialize())
+    offset += f.write(EndOfCentralDirectory(num_copies, cd_size, cd_offset).serialize(zip64=zip64))
 
     return offset
 
-def write_zip_quoted_reuse(f, num_additional, compressed_size=None, max_uncompressed_size=None):
+def write_zip_quoted_reuse(f, num_additional, compressed_size=None, max_uncompressed_size=None, zip64=False):
     class FileRecord:
         def __init__(self, header, data):
             self.header = header
@@ -421,7 +511,7 @@ def write_zip_quoted_reuse(f, num_additional, compressed_size=None, max_uncompre
         # The file that will follow this one is the one that has most recently
         # been added to the stack.
         next_file = files[-1]
-        next_header_bytes = next_file.header.serialize()
+        next_header_bytes = next_file.header.serialize(zip64=zip64)
 
         # Here we do a crc32_combine operation to compute the CRC of
         # prefix+remainder, knowing crc32(prefix), crc32(remainder), and a
@@ -455,24 +545,25 @@ def write_zip_quoted_reuse(f, num_additional, compressed_size=None, max_uncompre
     while files:
         record = files.pop()
         central_directory.append(CentralDirectoryHeader(offset, record.header))
-        offset += f.write(record.header.serialize())
+        offset += f.write(record.header.serialize(zip64=zip64))
         offset += f.write(record.data)
 
     cd_offset = offset
     for cd_header in central_directory:
-        offset += f.write(cd_header.serialize())
+        offset += f.write(cd_header.serialize(zip64=zip64))
     cd_size = offset - cd_offset
 
-    offset += f.write(EndOfCentralDirectory(len(central_directory), cd_size, cd_offset).serialize())
+    offset += f.write(EndOfCentralDirectory(len(central_directory), cd_size, cd_offset).serialize(zip64=zip64))
 
     return offset
 
 def main():
-    opts, args = getopt.gnu_getopt(sys.argv[1:], "", ["alphabet=", "compressed-size=", "max-uncompressed-size=", "mode=", "numfiles="])
+    opts, args = getopt.gnu_getopt(sys.argv[1:], "", ["alphabet=", "compressed-size=", "max-uncompressed-size=", "mode=", "numfiles=", "zip64"])
     assert not args, args
     global FILENAME_ALPHABET
     compressed_size = None
     max_uncompressed_size = None
+    zip64 = False
     for o, a in opts:
         if o == "--alphabet":
             assert len(set(sorted(a))) == len(a), a
@@ -485,10 +576,12 @@ def main():
             mode = a
         elif o == "--numfiles":
             num_files = int(a)
+        elif o == "--zip64":
+            zip64 = True
     if mode == "full_overlap":
-        write_zip_full_reuse(sys.stdout.buffer, num_files, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
+        write_zip_full_reuse(sys.stdout.buffer, num_files, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size, zip64=zip64)
     elif mode == "quoted_overlap":
-        write_zip_quoted_reuse(sys.stdout.buffer, num_files - 1, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
+        write_zip_quoted_reuse(sys.stdout.buffer, num_files - 1, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size, zip64=zip64)
     else:
         raise ValueError("unknown mode")
 
