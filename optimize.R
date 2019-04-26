@@ -68,12 +68,8 @@ zipped_size_given_compressed_size <- function(compressed_size, num_additional) {
 }
 
 unzipped_size_given_compressed_size <- function(compressed_size, num_additional) {
-	# This relies on specific knowledge of how bulk_deflate works, for
-	# example that the prefix and suffix are together 16 bytes long and
-	# automatically represent 1033 uncompressed bytes by themselves
-	# (1+258+258 in the prefix and 258+258 in the suffix).
 	unzipped_size <- 0
-	unzipped_size <- unzipped_size + (1033 + (compressed_size-16) * 1032) * (1 + num_additional)
+	unzipped_size <- unzipped_size + uncompressed_size_given_compressed_size(compressed_size) * (1 + num_additional)
 	unzipped_size <- unzipped_size + 30 * (num_additional * (num_additional + 1)) / 2
 	unzipped_size <- unzipped_size + triangular_sum_filename_lengths(1 + num_additional)
 	unzipped_size
@@ -104,6 +100,38 @@ unzipped_size_given_max_uncompressed_size <- function(max_uncompressed_size, num
 	unzipped_size
 }
 
+zipped_size_given_compressed_size_zip64 <- function(compressed_size, num_additional) {
+	zipped_size <- 0
+	zipped_size <- zipped_size + num_additional * 5 # 5 is DEFLATE quoting overhead
+	zipped_size <- zipped_size + compressed_size
+	zipped_size <- zipped_size + (30+20) * (1 + num_additional) # Local File Headers
+	zipped_size <- zipped_size + (46+12) * (1 + num_additional) # Central Directory Headers
+	zipped_size <- zipped_size + 2 * sum_filename_lengths(1 + num_additional) # Filenames in Local File Headers and Central Directory Headers
+	zipped_size <- zipped_size + 56 # Zip64 EOCD
+	zipped_size <- zipped_size + 20 # Zip64 end of central directory locator
+	zipped_size <- zipped_size + 22 # EOCD
+	# Assumes that every file gets Zip64 extra info; i.e., that
+	# uncompressed_size is at least 0x100000000. And that there is a Zip64
+	# EOCD; i.e., that there are at least 0x10000 files.
+	ifelse(uncompressed_size_given_compressed_size(compressed_size) > 0xffffffff & (1 + num_additional) > 0xffff, zipped_size, NA)
+}
+
+unzipped_size_given_compressed_size_zip64 <- function(compressed_size, num_additional) {
+	unzipped_size <- 0
+	unzipped_size <- unzipped_size + uncompressed_size_given_compressed_size(compressed_size) * (1 + num_additional)
+	unzipped_size <- unzipped_size + (30+20) * (num_additional * (num_additional + 1)) / 2
+	unzipped_size <- unzipped_size + triangular_sum_filename_lengths(1 + num_additional)
+	ifelse(uncompressed_size_given_compressed_size(compressed_size) > 0xffffffff & (1 + num_additional) > 0xffff, unzipped_size, NA)
+}
+
+uncompressed_size_given_compressed_size <- function(compressed_size) {
+	# This relies on specific knowledge of how bulk_deflate works,
+	# specifically that the prefix and suffix are together 16 bytes long
+	# and automatically represent 1033 uncompressed bytes by themselves
+	# (1+258+258 in the prefix and 258+258 in the suffix).
+	1033 + (compressed_size-16) * 1032
+}
+
 # bulk_deflate will get within 258 of max_uncompressed_size (accounting for the
 # 1 literal byte at the beginning).
 uncompressed_size_given_max_uncompressed_size <- function(max_uncompressed_size) {
@@ -123,7 +151,20 @@ optimize_for_zipped_size <- function(zipped_size) {
 	num_additional <- with(list(n=0:(avail/(30+5+46))), {
 		which.max(unzipped_size_given_compressed_size(avail - additional_size(n), n))
 	})
-	compressed_size = avail - additional_size(num_additional)
+	compressed_size <- avail - additional_size(num_additional)
+	list(compressed_size=compressed_size, num_additional=num_additional)
+}
+
+additional_size_zip64 <- function(num_additional) {
+	num_additional * (30 + 20 + 46 + 12 + 5) + 2 * sum_filename_lengths(1 + num_additional)
+}
+
+optimize_for_zipped_size_zip64 <- function(zipped_size) {
+	avail <- zipped_size - 30 - 20 - 46 - 12 - 56 - 20 - 22
+	num_additional <- with(list(n=0:(avail/(30+20+5+46+12))), {
+		which.max(unzipped_size_given_compressed_size_zip64(avail - additional_size_zip64(n), n))
+	})
+	compressed_size <- avail - additional_size_zip64(num_additional)
 	list(compressed_size=compressed_size, num_additional=num_additional)
 }
 
@@ -149,3 +190,9 @@ max_uncompressed_size <- candidates[[which.max(sapply(candidates, function(x) {
 list(max_uncompressed_size=max_uncompressed_size, num_additional=65534)
 print(c("zipped size", zipped_size_given_max_uncompressed_size(max_uncompressed_size, 65534)))
 print(c("unzipped size", unzipped_size_given_max_uncompressed_size(max_uncompressed_size, 65534)))
+
+cat("\n\noptimize zbxl.zip\n");
+params <- optimize_for_zipped_size_zip64(20*1024*1024)
+params
+print(c("zipped size", zipped_size_given_compressed_size_zip64(params$compressed_size, params$num_additional)))
+print(c("unzipped size", unzipped_size_given_compressed_size_zip64(params$compressed_size, params$num_additional)))
