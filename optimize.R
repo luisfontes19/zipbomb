@@ -148,9 +148,11 @@ additional_size <- function(num_additional) {
 
 optimize_for_zipped_size <- function(zipped_size) {
 	avail <- zipped_size - 30 - 46 - 22
-	num_additional <- with(list(n=0:(avail/(30+5+46))), {
+	low <- 0
+	high <- avail/(30+5+46)
+	num_additional <- (low:high)[[with(list(n=low:high), {
 		which.max(unzipped_size_given_compressed_size(avail - additional_size(n), n))
-	})
+	})]]
 	compressed_size <- avail - additional_size(num_additional)
 	list(compressed_size=compressed_size, num_additional=num_additional)
 }
@@ -161,9 +163,14 @@ additional_size_zip64 <- function(num_additional) {
 
 optimize_for_zipped_size_zip64 <- function(zipped_size) {
 	avail <- zipped_size - 30 - 20 - 46 - 12 - 56 - 20 - 22
-	num_additional <- with(list(n=0:(avail/(30+20+5+46+12))), {
+	low <- 0
+	high <- avail/(30+20+5+46+12)
+	num_additional <- (low:high)[[with(list(n=low:high), {
 		which.max(unzipped_size_given_compressed_size_zip64(avail - additional_size_zip64(n), n))
-	})
+	})]]
+	if (any(num_additional == low | num_additional == high)) {
+		stop()
+	}
 	compressed_size <- avail - additional_size_zip64(num_additional)
 	list(compressed_size=compressed_size, num_additional=num_additional)
 }

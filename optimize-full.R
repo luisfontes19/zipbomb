@@ -50,10 +50,10 @@ copies_size <- function(num_copies) {
 
 optimize <- function(total_size) {
 	avail <- total_size - 30 - 16 - 22 - sum_filename_lengths(1)
-	num_copies <- with(list(n=0:(avail/46)), {
+	num_copies <- (0:(avail/46))[[with(list(n=0:(avail/46)), {
 		# plot(n, uncompressed_size(avail - copies_size(n), n))
 		which.max(uncompressed_size(avail - copies_size(n), n))
-	})
+	})]]
 	deflate_size = avail - copies_size(num_copies)
 	list(deflate_size=deflate_size, num_copies=num_copies)
 }
