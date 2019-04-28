@@ -10,7 +10,7 @@ zbsm.zip:
 	$(ZIPBOMB) --mode=quoted_overlap --numfiles=250 --compressed-size=21179 > "$@"
 
 zblg.zip:
-	$(ZIPBOMB) --mode=quoted_overlap --numfiles=65535 --max-uncompressed-size=4292788491 > "$@"
+	$(ZIPBOMB) --mode=quoted_overlap --numfiles=65534 --max-uncompressed-size=4292788525 > "$@"
 
 zbxl.zip:
 	$(ZIPBOMB) --mode=quoted_overlap --numfiles=190023 --compressed-size=22982788 --zip64 > "$@"

@@ -183,21 +183,22 @@ print(c("zipped size", zipped_size_given_compressed_size(params$compressed_size,
 print(c("unzipped size", unzipped_size_given_compressed_size(params$compressed_size, params$num_additional)))
 
 cat("\n\noptimize zblg.zip\n");
-# 2^32 - 2 is the maximum representable file size. (Not 2^32 - 1 because that makes Go 1.5, at least, insist on a Zip64 extra field being present: https://github.com/golang/go/issues/14185)
-# 30*65534 is the file size increase from quoting 65534 Local File Headers.
+# 2^32 - 2 is the maximum representable file size. (Not 2^32 - 1 because that makes Go 1.5, at least, insist on a Zip64 extra field being present: https://github.com/golang/go/issues/31692)
+# 65533 is the maximum number of additional files. (Not 65534, because yauzl insists on a Zip64 EOCD being present: https://github.com/thejoshwolfe/yauzl/blob/2.10.0/index.js#L140)
+# 30*65533 is the file size increase from quoting 65533 Local File Headers.
 # sum_filename_lengths(65534) - sum_filename_lengths(1) is the file size increase from quoting all but the first filename.
-max_uncompressed_size <- 2^32 - 2 - (30*65534 + sum_filename_lengths(65535) - sum_filename_lengths(1))
+max_uncompressed_size <- 2^32 - 2 - (30*65533 + sum_filename_lengths(65534) - sum_filename_lengths(1))
 # The compression ratio is not monotonic in max_uncompressed_size. Omitting one
 # pair of 0 bits decreases the zipped size by 258*65535 ≈ 17 MB, but it is
 # worth it if omitting those bits saves one byte in the DEFLATE suffix.
 # So try our absolute maximum limit minus 0, 258, 516, 774.
 candidates <- seq(max_uncompressed_size, max_uncompressed_size-1032, -258)
 max_uncompressed_size <- candidates[[which.max(sapply(candidates, function(x) {
-	unzipped_size_given_max_uncompressed_size(x, 65534) / zipped_size_given_max_uncompressed_size(x, 65534)
+	unzipped_size_given_max_uncompressed_size(x, 65533) / zipped_size_given_max_uncompressed_size(x, 65533)
 }))]]
-list(max_uncompressed_size=max_uncompressed_size, num_additional=65534)
-print(c("zipped size", zipped_size_given_max_uncompressed_size(max_uncompressed_size, 65534)))
-print(c("unzipped size", unzipped_size_given_max_uncompressed_size(max_uncompressed_size, 65534)))
+list(max_uncompressed_size=max_uncompressed_size, num_additional=65533)
+print(c("zipped size", zipped_size_given_max_uncompressed_size(max_uncompressed_size, 65533)))
+print(c("unzipped size", unzipped_size_given_max_uncompressed_size(max_uncompressed_size, 65533)))
 
 cat("\n\noptimize zbxl.zip\n");
 # Binary search for zipped_size that gets an unzipped_size as close as possible
