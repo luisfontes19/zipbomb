@@ -7,7 +7,7 @@ import struct
 import sys
 
 
-CHOSEN_BYTE = ord(b"A") # homage to 42.zip
+CHOSEN_BYTE = ord(b"a") # homage to 42.zip
 
 
 # CRC-32 precomputation using matrices in GF(2). Similar to crc32_combine in
