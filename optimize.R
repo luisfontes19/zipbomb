@@ -220,10 +220,11 @@ print(c("zipped size", zipped_size_given_compressed_size_zip64(params$compressed
 print(c("unzipped size", unzipped_size_given_compressed_size_zip64(params$compressed_size, params$num_additional)))
 
 # cat("\n\noptimize zbxxl.zip\n");
-# # Binary search for zipped_size that gets an unzipped_size as close as possible
-# # to the full recursive unzipped size of 42.zip.
+# # Binary search for the smallest zipped_size that gets an unzipped_size greater
+# # than 2^64-1 (actually 2^64 because of floating-point imprecision).
 # low <- 10*1024*1024
 # high <- NA
+# target <- 2^64
 # while (is.na(high) || low < high) {
 # 	if (is.na(high)) {
 # 		mid <- low * 2
@@ -234,7 +235,7 @@ print(c("unzipped size", unzipped_size_given_compressed_size_zip64(params$compre
 # 	unzipped_size <- unzipped_size_given_compressed_size_zip64(params$compressed_size, params$num_additional)
 # 	print(c(low, mid, high))
 # 	print(log(unzipped_size, 2))
-# 	if (log(unzipped_size, 2) < 64) {
+# 	if (unzipped_size < target) {
 # 		low <- mid + 1
 # 	} else {
 # 		high <- mid
