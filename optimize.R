@@ -110,10 +110,7 @@ zipped_size_given_compressed_size_zip64 <- function(compressed_size, num_additio
 	zipped_size <- zipped_size + 56 # Zip64 EOCD
 	zipped_size <- zipped_size + 20 # Zip64 end of central directory locator
 	zipped_size <- zipped_size + 22 # EOCD
-	# Assumes that every file gets Zip64 extra info; i.e., that
-	# uncompressed_size is at least 0x100000000. And that there is a Zip64
-	# EOCD; i.e., that there are at least 0x10000 files.
-	ifelse(uncompressed_size_given_compressed_size(compressed_size) > 0xffffffff & (1 + num_additional) > 0xffff, zipped_size, NA)
+	zipped_size
 }
 
 unzipped_size_given_compressed_size_zip64 <- function(compressed_size, num_additional) {
@@ -121,7 +118,7 @@ unzipped_size_given_compressed_size_zip64 <- function(compressed_size, num_addit
 	unzipped_size <- unzipped_size + uncompressed_size_given_compressed_size(compressed_size) * (1 + num_additional)
 	unzipped_size <- unzipped_size + (30+20) * (num_additional * (num_additional + 1)) / 2
 	unzipped_size <- unzipped_size + triangular_sum_filename_lengths(1 + num_additional)
-	ifelse(uncompressed_size_given_compressed_size(compressed_size) > 0xffffffff & (1 + num_additional) > 0xffff, unzipped_size, NA)
+	unzipped_size
 }
 
 uncompressed_size_given_compressed_size <- function(compressed_size) {
@@ -162,7 +159,7 @@ additional_size_zip64 <- function(num_additional) {
 }
 
 optimize_for_zipped_size_zip64 <- function(zipped_size) {
-	avail <- zipped_size - 30 - 20 - 46 - 12 - 56 - 20 - 22
+	avail <- zipped_size - (30+20) - (46+12) - (56+20+22)
 	total <- avail/(30+20+5+46+12)
 	low <- floor(total * 0.45)
 	high <- floor(total * 0.48)
@@ -201,8 +198,8 @@ print(c("zipped size", zipped_size_given_max_uncompressed_size(max_uncompressed_
 print(c("unzipped size", unzipped_size_given_max_uncompressed_size(max_uncompressed_size, 65533)))
 
 cat("\n\noptimize zbxl.zip\n");
-# Binary search for zipped_size that gets an unzipped_size as close as possible
-# to the full recursive unzipped size of 42.zip.
+# Binary search for the smallest zipped_size that gets an unzipped_size greater
+# than the full recursive unzipped size of 42.zip.
 low <- 10*1024*1024
 high <- 100*1024*1024
 target <- 4507981343026016

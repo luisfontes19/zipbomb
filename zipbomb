@@ -288,6 +288,24 @@ ZIP64_VERSION = 45
 MOD_DATE = 0x0548
 MOD_TIME = 0x6ca0
 
+# In Zip64 mode, we add a Zip64 extra field for every file (including using
+# ZIP64_VERSION instead of ZIP_VERSION) for *every* file, whether it is large
+# enough to need it or not. Past a certain threshold, every file *does* need it
+# anyway. I t may be slightly better for compatibility to write every file in
+# either Zip64 or non-Zip64 mode. See the block comment in putextended in
+# zipfile.c of Info-ZIP Zip 3.0 (though the worst incompatibility has to do with
+# data descriptors, which we don't use).
+#
+# Even in Zip64 mode, we make the assumption that the only field that needs to
+# be represented in the Zip64 extra info is uncompressed_size, and not
+# compressed_size nor local_file_header_offset (checked with an assertion in
+# CentralDirectoryHeader.serialize). This is to make analysis easier (central
+# directory headers and local file headers continue to have a fixed size), and
+# because the zip file has to be really big for either of those fields to exceed
+# 4 GiB—the quoted_overlap method can produce a zip file whose total unzipped
+# size is greater than 16 EiB (2^64 bytes) without exceeding either of those
+# limits.
+
 class LocalFileHeader:
     def __init__(self, compressed_size, uncompressed_size, crc, filename):
         self.compressed_size = compressed_size
@@ -296,15 +314,13 @@ class LocalFileHeader:
         self.filename = filename
 
     def serialize(self, zip64=False):
-        # See the comment about the Zip64 extra field in
-        # CentralDirectoryHeader.serialize. Here in the local file header, we
-        # have no local_file_header_offset, and APPNOTE.TXT 4.5.3 says that we
-        # must include both uncompressed_size and compressed_size, even if one
-        # of them is not so big as to require Zip64.
-        zip64_extra = b""
-        if self.uncompressed_size > 0xffffffff or self.compressed_size > 0xfffffffe:
-            assert zip64    # Disallow unless Zip64 was requested.
-            zip64_extra = struct.pack("<HHQQ",
+        # APPNOTE.TXT 4.5.3 says that in the local file header, unlike the
+        # central directory header, we must include both uncompressed_size and
+        # compressed_size in the Zip64 extra field, even if one of them is not
+        # so big as to require Zip64.
+        extra = b""
+        if zip64:
+            extra += struct.pack("<HHQQ",
                 0x0001, # tag type (Zip64)
                 16,     # tag size
                 self.uncompressed_size, # uncompressed size
@@ -314,17 +330,17 @@ class LocalFileHeader:
         # APPNOTE.TXT 4.3.7
         return struct.pack("<LHHHHHLLLHH",
             0x04034b50, # signature
-            zip64_extra and ZIP64_VERSION or ZIP_VERSION,   # version needed to extract
+            zip64 and ZIP64_VERSION or ZIP_VERSION,   # version needed to extract
             0,          # flags
             COMPRESSION_METHOD_DEFLATE, # compression method
             MOD_TIME,   # modification time
             MOD_DATE,   # modification date
             self.crc,   # CRC-32
-            zip64_extra and 0xffffffff or self.compressed_size,     # compressed size
-            zip64_extra and 0xffffffff or self.uncompressed_size,   # uncompressed size
+            zip64 and 0xffffffff or self.compressed_size,     # compressed size
+            zip64 and 0xffffffff or self.uncompressed_size,   # uncompressed size
             len(self.filename),     # filename length
-            len(zip64_extra),       # extra length
-        ) + self.filename + zip64_extra
+            len(extra),       # extra length
+        ) + self.filename + extra
 
 class CentralDirectoryHeader:
     # template is a LocalFileHeader instance.
@@ -336,50 +352,26 @@ class CentralDirectoryHeader:
         self.filename = template.filename
 
     def serialize(self, zip64=False):
-        # The fields of the Zip64 extra field are optional and only required
-        # when the corresponding field in the central directory header is
-        # 0xffffffff (see APPNOTE.TXT 4.5.3). But for compatibility, we make it
-        # so that the existence of a later field implies the existence of all
-        # earlier fields—Go archive/zip before Go 1.6 incorrectly omits the
-        # 0xffffffff check. https://github.com/golang/go/issues/13367
+        # Even in Zip64 mode, we assume that the only field that needs to be
+        # represented in the Zip64 extra field is uncompressed_size.
         #
-        # Also, we set the threshold at 0xffffffff for uncompressed_size but
-        # 0xfffffffe for compressed_size and local_file_header_offset, for
-        # compatibility with Go archive/zip which (wrongly, IMO) requires a
-        # Zip64 extra field to be present when either of the two latter fields
-        # is exactly 0xffffffff.
+        # Also, we set the threshold for compressed_size and
+        # local_file_header_offset at 0xfffffffe rather than 0xffffffff because
+        # Go archive/zip which (wrongly, IMO) requires a Zip64 extra field to be
+        # present when either of the two latter fields is exactly 0xffffffff.
         # https://github.com/golang/go/issues/31692
-        zip64_uncompressed_size = False
-        zip64_compressed_size = False
-        zip64_local_file_header_offset = False
-        if self.uncompressed_size > 0xffffffff:
-            zip64_uncompressed_size = True
-        if self.compressed_size > 0xfffffffe:
-            zip64_uncompressed_size = True
-            zip64_compressed_size = True
-        if self.local_file_header_offset > 0xfffffffe:
-            zip64_uncompressed_size = True
-            zip64_compressed_size = True
-            zip64_local_file_header_offset = True
-        zip64_extra = b""
-        if zip64_uncompressed_size:
-            zip64_extra += struct.pack("<Q", self.uncompressed_size)
-        if zip64_compressed_size:
-            zip64_extra += struct.pack("<Q", self.compressed_size)
-        if zip64_local_file_header_offset:
-            zip64_extra += struct.pack("<Q", self.local_file_header_offset)
-        if zip64_extra:
-            assert zip64    # Disallow unless Zip64 was requested.
-            zip64_extra = struct.pack("<HH",
-                0x0001,             # tag type (Zip64)
-                len(zip64_extra),   # tag size
-            ) + zip64_extra
+        assert self.compressed_size <= 0xfffffffe, self.compressed_size
+        assert self.local_file_header_offset <= 0xfffffffe, self.local_file_header_offset
+
+        extra = b""
+        if zip64:
+            extra += struct.pack("<HHQ",
+                0x0001, # tag type (Zip64)
+                8,      # tag size
+                self.uncompressed_size, # uncompressed size
+            )
 
         # APPNOTE.TXT 4.3.12
-        # Even in Zip64 mode, we assume that the compressed size and local file
-        # header offset fit in 32 bits, for a small size optimization.
-        assert self.compressed_size < 0xffffffff, self.compressed_size
-        assert self.local_file_header_offset < 0xffffffff, self.local_file_header_offset
         return struct.pack("<LHHHHHHLLLHHHHHLL",
             0x02014b50, # signature
             (0<<8) | (zip64 and ZIP64_VERSION or ZIP_VERSION),  # version made by (0 - MS-DOS/FAT compatible)
@@ -389,16 +381,16 @@ class CentralDirectoryHeader:
             MOD_TIME,   # modification time
             MOD_DATE,   # modification date
             self.crc,   # CRC-32
-            zip64_compressed_size and 0xffffffff or self.compressed_size,       # compressed size
-            zip64_uncompressed_size and 0xffffffff or self.uncompressed_size,   # uncompressed size
+            self.compressed_size,   # compressed size
+            zip64 and 0xffffffff or self.uncompressed_size,   # uncompressed size
             len(self.filename),     # filename length
-            len(zip64_extra),       # extra length
+            len(extra), # extra length
             0,          # file comment length
             0,          # disk number where file starts
             0,          # internal file attributes
             0,          # external file attributes
-            zip64_local_file_header_offset and 0xffffffff or self.local_file_header_offset, # offset of local file header
-        ) + self.filename + zip64_extra
+            self.local_file_header_offset,  # offset of local file header
+        ) + self.filename + extra
 
 class EndOfCentralDirectory:
     def __init__(self, cd_num_entries, cd_size, cd_offset):
@@ -408,9 +400,7 @@ class EndOfCentralDirectory:
 
     def serialize(self, zip64=False):
         result = []
-        need_zip64 = self.cd_num_entries > 0xffff or self.cd_size > 0xffffffff or self.cd_offset > 0xffffffff
-        if need_zip64:
-            assert zip64    # Disallow unless Zip64 was requested.
+        if zip64:
             # APPNOTE.TXT 4.3.14 Zip64 end of central directory record
             # We use the "Version 1" Zip64 EOCD (Zip version 4.5). "Version 2"
             # would be indicated by a Zip version of 6.2 or greater. APPNOTE.TXT
@@ -441,10 +431,10 @@ class EndOfCentralDirectory:
             0x06054b50, # signature
             0,          # number of this disk
             0,          # disk of central directory
-            need_zip64 and 0xffff or self.cd_num_entries,   # number of central directory entries on this disk
-            need_zip64 and 0xffff or self.cd_num_entries,   # number of central directory entries total
-            need_zip64 and 0xffffffff or self.cd_size,      # size of central directory
-            need_zip64 and 0xffffffff or self.cd_offset,    # offset of central directory
+            zip64 and 0xffff or self.cd_num_entries,    # number of central directory entries on this disk
+            zip64 and 0xffff or self.cd_num_entries,    # number of central directory entries total
+            zip64 and 0xffffffff or self.cd_size,       # size of central directory
+            zip64 and 0xffffffff or self.cd_offset,     # offset of central directory
             0,          # comment length
         ))
         return b"".join(result)
