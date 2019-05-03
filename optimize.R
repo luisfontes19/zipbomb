@@ -161,17 +161,118 @@ additional_size_zip64 <- function(num_additional) {
 optimize_for_zipped_size_zip64 <- function(zipped_size) {
 	avail <- zipped_size - (30+20) - (46+12) - (56+20+22)
 	total <- avail/(30+20+5+46+12)
-	low <- floor(total * 0.45)
-	high <- floor(total * 0.48)
+	low <- max(floor(min(total * 0.45, total/2 - 10)), 0)
+	high <- min(floor(max(total * 0.48, total/2 + 10)), total)
 	num_additional <- (low:high)[[with(list(n=low:high), {
 		which.max(unzipped_size_given_compressed_size_zip64(avail - additional_size_zip64(n), n))
 	})]]
 	if (any(num_additional == low | num_additional == high)) {
-		stop()
+		stop(sprintf("%s %s %s", num_additional, low, high))
 	}
 	compressed_size <- avail - additional_size_zip64(num_additional)
 	list(compressed_size=compressed_size, num_additional=num_additional)
 }
+
+optimize_for_num_files <- function(num_files) {
+	# 2^32 - 2 is the maximum representable file size. (Not 2^32 - 1 because that makes Go 1.5, at least, insist on a Zip64 extra field being present: https://github.com/golang/go/issues/31692)
+	# 30*(num_files-1)is the file size increase from quoting num_files-1 Local File Headers.
+	# sum_filename_lengths(num_files) - sum_filename_lengths(1) is the file size increase from quoting all but the first filename.
+	max_uncompressed_size <- 2^32 - 2 - (30*(num_files-1)+ sum_filename_lengths(num_files) - sum_filename_lengths(1))
+	# The compression ratio is not monotonic in max_uncompressed_size. Omitting one
+	# pair of 0 bits decreases the zipped size by 258*65535 ≈ 17 MB, but it is
+	# worth it if omitting those bits saves one byte in the DEFLATE suffix.
+	# So try our absolute maximum limit minus 0, 258, 516, 774.
+	candidates <- seq(max_uncompressed_size, max_uncompressed_size-1032, -258)
+	max_uncompressed_size <- candidates[[which.max(sapply(candidates, function(x) {
+		unzipped_size_given_max_uncompressed_size(x, num_files-1) / zipped_size_given_max_uncompressed_size(x, num_files-1)
+	}))]]
+	list(max_uncompressed_size=max_uncompressed_size, num_additional=65533)
+}
+
+
+library(ggplot2)
+library(data.table)
+
+binary_search <- function(low, high, pred) {
+	low <- floor(low)
+	hight <- ceiling(high)
+	while (is.na(high) || low < high) {
+		if (is.na(high)) {
+			mid <- low * 2
+		} else {
+			mid <- floor((low + high) / 2)
+		}
+		if (!pred(mid)) {
+			low <- mid + 1
+		} else {
+			high <- mid
+		}
+	}
+	low
+}
+
+fits_zip32 <- function(params) {
+	((1+params$num_additional) <= 0xfffe) & (uncompressed_size_given_compressed_size(params$compressed_size) + 30 * params$num_additional + sum_filename_lengths(1 + params$num_additional) - sum_filename_lengths(1) <= 0xfffffffe)
+}
+
+byte_breaks <- 1000^(0:6)
+byte_breaks_minor <- c(byte_breaks*10, byte_breaks*100)
+byte_labels <- c("1 B", "1 kB", "1 MB", "1 GB", "1 TB", "1 PB", "1 EB")
+
+data <- data.frame(group=c(), zipped_size=c(), unzipped_size=c(), stringsAsFactors=FALSE)
+zipped_size <- 500
+while (TRUE) {
+	print(zipped_size)
+	params <- optimize_for_zipped_size(zipped_size)
+	if (!fits_zip32(params)) {
+		break;
+	}
+	if (zipped_size != zipped_size_given_compressed_size(params$compressed_size, params$num_additional)) {
+		stop("error")
+	}
+	unzipped_size <- unzipped_size_given_compressed_size(params$compressed_size, params$num_additional)
+	data <- rbind(data, list(group="zip", zipped_size=zipped_size, unzipped_size=unzipped_size), stringsAsFactors=FALSE)
+	zipped_size <- floor(zipped_size * 1.5)
+}
+# search for the maximum size before we start being limited by file size
+zipped_size <- binary_search(zipped_size / 1.5, NA, function(z) {
+	params <- optimize_for_zipped_size(z)
+	!fits_zip32(params)
+}) - 1
+params <- optimize_for_zipped_size(zipped_size)
+unzipped_size <- unzipped_size_given_compressed_size(params$compressed_size, params$num_additional)
+data <- rbind(data, list(group="zip", zipped_size=zipped_size, unzipped_size=unzipped_size), stringsAsFactors=FALSE)
+params <- optimize_for_num_files(65534)
+zipped_size <- zipped_size_given_max_uncompressed_size(params$max_uncompressed_size, params$num_additional)
+unzipped_size <- unzipped_size_given_max_uncompressed_size(params$max_uncompressed_size, params$num_additional)
+data <- rbind(data, list(group="zip", zipped_size=zipped_size, unzipped_size=unzipped_size), stringsAsFactors=FALSE)
+
+zipped_size <- 500
+while (zipped_size < 1*1024*1024*1024) {
+	print(zipped_size)
+	params <- optimize_for_zipped_size_zip64(zipped_size)
+	if (zipped_size != zipped_size_given_compressed_size_zip64(params$compressed_size, params$num_additional)) {
+		stop("error")
+	}
+	unzipped_size <- unzipped_size_given_compressed_size_zip64(params$compressed_size, params$num_additional)
+	data <- rbind(data, list(group="zip64", zipped_size=zipped_size, unzipped_size=unzipped_size), stringsAsFactors=FALSE)
+	zipped_size <- floor(zipped_size * 1.5)
+
+	data <- rbind(data, list(group="bzip2sim", zipped_size=zipped_size, unzipped_size=zipped_size*1400000), stringsAsFactors=FALSE)
+}
+data <- rbind(data, list(group="42.zip (nonrec)", zipped_size=42374, unzipped_size=558432), stringsAsFactors=FALSE)
+data <- rbind(data, list(group="42.zip (rec)", zipped_size=42374, unzipped_size=4507981343026016), stringsAsFactors=FALSE)
+p <- ggplot(data, aes(zipped_size, unzipped_size, color=group))
+p <- p + geom_abline(slope=1, intercept=0, size=0.2, linetype=3)
+p <- p + geom_point(size=0.3, alpha=0.8)
+p <- p + geom_line()
+p <- p + theme_minimal()
+p <- p + scale_x_log10(breaks=byte_breaks, labels=byte_labels, minor_breaks=byte_breaks_minor)
+p <- p + scale_y_log10(breaks=byte_breaks, labels=byte_labels, minor_breaks=byte_breaks_minor)
+p <- p + coord_fixed(xlim=c(min(data$zipped_size, data$unzipped_size), max(data$zipped_size)), ylim=c(min(data$zipped_size, data$unzipped_size), max(data$unzipped_size)))
+p
+
+stop()
 
 cat("\n\noptimize zbsm.zip\n");
 params <- optimize_for_zipped_size(42374)
