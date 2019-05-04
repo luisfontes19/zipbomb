@@ -15,4 +15,8 @@ zblg.zip:
 zbxl.zip:
 	$(ZIPBOMB) --mode=quoted_overlap --num-files=190023 --compressed-size=22982788 --zip64 > "$@"
 
+# Not made by default.
+zbxxl.zip:
+	$(ZIPBOMB) --mode=quoted_overlap --num-files=12056313 --compressed-size=1482284040 --zip64 > "$@"
+
 .DELETE_ON_ERROR:
