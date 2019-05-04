@@ -508,7 +508,7 @@ def filename_for_index(i):
             break
     return bytes(letters)
 
-def write_zip_full_reuse(f, num_copies, compressed_size=None, max_uncompressed_size=None, compression_method=COMPRESSION_METHOD_DEFLATE, zip64=False):
+def write_zip_full_overlap(f, num_files, compressed_size=None, max_uncompressed_size=None, compression_method=COMPRESSION_METHOD_DEFLATE, zip64=False):
     bulk_compress = {
         COMPRESSION_METHOD_BZIP2: bulk_bzip2,
         COMPRESSION_METHOD_DEFLATE: bulk_deflate,
@@ -524,17 +524,17 @@ def write_zip_full_reuse(f, num_copies, compressed_size=None, max_uncompressed_s
     offset += f.write(compressed_data)
 
     cd_offset = offset
-    for i in range(num_copies):
+    for i in range(num_files):
         cd_header = CentralDirectoryHeader(main_file_offset, main_file)
         cd_header.filename = filename_for_index(i)
         offset += f.write(cd_header.serialize(zip64=zip64))
     cd_size = offset - cd_offset
 
-    offset += f.write(EndOfCentralDirectory(num_copies, cd_size, cd_offset).serialize(compression_method=compression_method, zip64=zip64))
+    offset += f.write(EndOfCentralDirectory(num_files, cd_size, cd_offset).serialize(compression_method=compression_method, zip64=zip64))
 
     return offset
 
-def write_zip_quoted_reuse(f, num_additional, compressed_size=None, max_uncompressed_size=None, compression_method=COMPRESSION_METHOD_DEFLATE, zip64=False):
+def write_zip_quoted_overlap(f, num_files, compressed_size=None, max_uncompressed_size=None, compression_method=COMPRESSION_METHOD_DEFLATE, zip64=False):
     # This construction relies on DEFLATE non-compressed blocks.
     assert compression_method == COMPRESSION_METHOD_DEFLATE
 
@@ -547,7 +547,7 @@ def write_zip_quoted_reuse(f, num_additional, compressed_size=None, max_uncompre
     # actually contains the bulk of the compressed data.
     files = []
     compressed_data, n, crc_matrix = bulk_deflate(CHOSEN_BYTE, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
-    header = LocalFileHeader(len(compressed_data), n, crc_matrix_apply(crc_matrix), filename_for_index(num_additional), compression_method=compression_method)
+    header = LocalFileHeader(len(compressed_data), n, crc_matrix_apply(crc_matrix), filename_for_index(num_files-1), compression_method=compression_method)
     files.append(FileRecord(header, compressed_data))
 
     crc_matrix = precompute_crc_matrix_repeated(b"\x00", n)
@@ -562,7 +562,7 @@ def write_zip_quoted_reuse(f, num_additional, compressed_size=None, max_uncompre
         crc_matrix_cache[(data, n)] = val
         return val
 
-    for i in range(num_additional):
+    for i in range(num_files-1):
         # The file that will follow this one is the one that has most recently
         # been added to the stack.
         next_file = files[-1]
@@ -591,7 +591,7 @@ def write_zip_quoted_reuse(f, num_additional, compressed_size=None, max_uncompre
             len(quote) + len(next_header_bytes) + next_file.header.compressed_size,
             len(next_header_bytes) + next_file.header.uncompressed_size,
             new_crc,
-            filename_for_index(num_additional - i - 1),
+            filename_for_index(num_files - 1 - i - 1),
             compression_method=compression_method,
         )
         files.append(FileRecord(header, quote))
@@ -617,6 +617,7 @@ def main():
     opts, args = getopt.gnu_getopt(sys.argv[1:], "", ["algorithm=", "alphabet=", "compressed-size=", "max-uncompressed-size=", "mode=", "num-files=", "zip64"])
     assert not args, args
     global FILENAME_ALPHABET
+    mode = write_zip_quoted_overlap
     compression_method = COMPRESSION_METHOD_DEFLATE
     compressed_size = None
     max_uncompressed_size = None
@@ -635,17 +636,15 @@ def main():
         elif o == "--max-uncompressed-size":
             max_uncompressed_size = int(a)
         elif o == "--mode":
-            mode = a
+            mode = {
+                "full_overlap": write_zip_full_overlap,
+                "quoted_overlap": write_zip_quoted_overlap,
+            }[a]
         elif o == "--num-files":
             num_files = int(a)
         elif o == "--zip64":
             zip64 = True
-    if mode == "full_overlap":
-        write_zip_full_reuse(sys.stdout.buffer, num_files, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size, compression_method=compression_method, zip64=zip64)
-    elif mode == "quoted_overlap":
-        write_zip_quoted_reuse(sys.stdout.buffer, num_files - 1, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size, compression_method=compression_method, zip64=zip64)
-    else:
-        raise ValueError("unknown mode")
+    mode(sys.stdout.buffer, num_files, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size, compression_method=compression_method, zip64=zip64)
 
 if __name__ == "__main__":
     main()
