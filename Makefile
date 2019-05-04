@@ -4,15 +4,15 @@ ZIPBOMB = python3 zipbomb
 all: overlap.zip zbsm.zip zblg.zip zbxl.zip
 
 overlap.zip:
-	$(ZIPBOMB) --mode=full_overlap --alphabet ABCDEFGHIJKLMNOPQRSTUVWXYZ --numfiles=26 --compressed-size=10000 > "$@"
+	$(ZIPBOMB) --mode=full_overlap --alphabet ABCDEFGHIJKLMNOPQRSTUVWXYZ --num-files=26 --compressed-size=10000 > "$@"
 
 zbsm.zip:
-	$(ZIPBOMB) --mode=quoted_overlap --numfiles=250 --compressed-size=21179 > "$@"
+	$(ZIPBOMB) --mode=quoted_overlap --num-files=250 --compressed-size=21179 > "$@"
 
 zblg.zip:
-	$(ZIPBOMB) --mode=quoted_overlap --numfiles=65534 --max-uncompressed-size=4292788525 > "$@"
+	$(ZIPBOMB) --mode=quoted_overlap --num-files=65534 --max-uncompressed-size=4292788525 > "$@"
 
 zbxl.zip:
-	$(ZIPBOMB) --mode=quoted_overlap --numfiles=190023 --compressed-size=22982788 --zip64 > "$@"
+	$(ZIPBOMB) --mode=quoted_overlap --num-files=190023 --compressed-size=22982788 --zip64 > "$@"
 
 .DELETE_ON_ERROR:

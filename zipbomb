@@ -548,7 +548,7 @@ def write_zip_quoted_reuse(f, num_additional, compressed_size=None, max_uncompre
     return offset
 
 def main():
-    opts, args = getopt.gnu_getopt(sys.argv[1:], "", ["alphabet=", "compressed-size=", "max-uncompressed-size=", "mode=", "numfiles=", "zip64"])
+    opts, args = getopt.gnu_getopt(sys.argv[1:], "", ["alphabet=", "compressed-size=", "max-uncompressed-size=", "mode=", "num-files=", "zip64"])
     assert not args, args
     global FILENAME_ALPHABET
     compressed_size = None
@@ -564,7 +564,7 @@ def main():
             max_uncompressed_size = int(a)
         elif o == "--mode":
             mode = a
-        elif o == "--numfiles":
+        elif o == "--num-files":
             num_files = int(a)
         elif o == "--zip64":
             zip64 = True
