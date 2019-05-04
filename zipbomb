@@ -508,6 +508,30 @@ def filename_for_index(i):
             break
     return bytes(letters)
 
+def write_zip_no_overlap(f, num_files, compressed_size=None, max_uncompressed_size=None, compression_method=COMPRESSION_METHOD_DEFLATE, zip64=False):
+    bulk_compress = {
+        COMPRESSION_METHOD_BZIP2: bulk_bzip2,
+        COMPRESSION_METHOD_DEFLATE: bulk_deflate,
+    }[compression_method]
+    compressed_data, n, crc_matrix = bulk_compress(CHOSEN_BYTE, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
+
+    cd = []
+    offset = 0
+    for i in range(num_files):
+        file = LocalFileHeader(len(compressed_data), n, crc_matrix_apply(crc_matrix), filename_for_index(i), compression_method=compression_method)
+        cd.append(CentralDirectoryHeader(offset, file))
+        offset += f.write(file.serialize(zip64=zip64))
+        offset += f.write(compressed_data)
+
+    cd_offset = offset
+    for cd_header in cd:
+        offset += f.write(cd_header.serialize(zip64=zip64))
+    cd_size = offset - cd_offset
+
+    offset += f.write(EndOfCentralDirectory(num_files, cd_size, cd_offset).serialize(zip64=zip64, compression_method=compression_method))
+
+    return offset
+
 def write_zip_full_overlap(f, num_files, compressed_size=None, max_uncompressed_size=None, compression_method=COMPRESSION_METHOD_DEFLATE, zip64=False):
     bulk_compress = {
         COMPRESSION_METHOD_BZIP2: bulk_bzip2,
@@ -637,6 +661,7 @@ def main():
             max_uncompressed_size = int(a)
         elif o == "--mode":
             mode = {
+                "no_overlap": write_zip_no_overlap,
                 "full_overlap": write_zip_full_overlap,
                 "quoted_overlap": write_zip_quoted_overlap,
             }[a]
