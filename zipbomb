@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import binascii
+import bz2
 import getopt
 import math
 import struct
@@ -275,18 +276,73 @@ def bulk_deflate(repeated_byte, compressed_size=None, max_uncompressed_size=None
     return compressed_data, n, precompute_crc_matrix_repeated(bytes([repeated_byte]), n)
 
 
+# bzip2 stuff
+
+def bulk_bzip2(repeated_byte, compressed_size=None, max_uncompressed_size=None):
+    assert (compressed_size is None and max_uncompressed_size is not None) or (compressed_size is not None and max_uncompressed_size is None)
+
+    # 45899235, empirically determined to be the largest amount of data that
+    # fits into a 900 kB block after the initial bzip2 RLE (each 255 bytes
+    # becomes 5 bytes; 45899235 * 5 / 255 = 899985).
+    # https://en.wikipedia.org/w/index.php?title=Bzip2&oldid=890453143#File_format
+    # says it can fit 45899236, 1 byte more, but in my tests that results in a
+    # second block being emitted.
+    block_uncompressed_size = 45899235
+
+    # Use an actual bzip2 implementation to compress the entire stream, then
+    # extract from it a single block that we will repeat. This is actually
+    # bogus, because whatever follows the block header is not necessarily
+    # byte-aligned, but the assertions will prevent going ahead if things don't
+    # work out perfectly.
+    basic = bz2.compress(bytes([repeated_byte])*block_uncompressed_size, 9)
+    assert len(basic) == 46, basic
+    header, block, footer, _ = basic[0:4], basic[4:36], basic[36:42], basic[42:]
+    assert header == b"BZh9", header
+    assert block.startswith(b"\x31\x41\x59\x26\x53\x59"), block
+    assert footer == b"\x17\x72\x45\x38\x50\x90", header
+    block_crc, = struct.unpack(">L", block[6:10])
+
+    if compressed_size is not None:
+        num_blocks = (compressed_size - 4 - 10) // 32
+        assert (compressed_size - 4 - 10) % 32 == 0
+    else:
+        num_blocks = max_uncompressed_size // block_uncompressed_size
+    n = num_blocks * block_uncompressed_size
+    # 2.2.4 https://github.com/dsnet/compress/blob/master/doc/bzip2-format.pdf
+    stream_crc = 0
+    for i in range(num_blocks):
+        stream_crc = (block_crc ^ ((stream_crc<<1) | (stream_crc>>31))) & 0xffffffff
+
+    crc_matrix = precompute_crc_matrix_repeated(bytes([repeated_byte]), n)
+    compressed_data = header + block*num_blocks + footer + struct.pack(">L", stream_crc)
+    return compressed_data, n, crc_matrix
+
+
 # APPNOTE.TXT 4.4.5
 # 8 - The file is Deflated
 COMPRESSION_METHOD_DEFLATE = 8
+# 12 - File is compressed using BZIP2 algorithm
+COMPRESSION_METHOD_BZIP2 = 12
 
 # APPNOTE.TXT 4.4.3.2
 # 2.0 - File is compressed using Deflate compression
 ZIP_VERSION = 20
 # 4.5 - File uses ZIP64 format extensions
 ZIP64_VERSION = 45
+# 4.6 - File is compressed using BZIP2 compression
+ZIP_BZIP2_VERSION = 46
 
 MOD_DATE = 0x0548
 MOD_TIME = 0x6ca0
+
+def zip_version(compression_method=COMPRESSION_METHOD_DEFLATE, zip64=False):
+    candidates = [{
+        COMPRESSION_METHOD_BZIP2: ZIP_BZIP2_VERSION,
+        COMPRESSION_METHOD_DEFLATE: ZIP_VERSION,
+    }[compression_method]]
+    if zip64:
+        candidates.append(ZIP64_VERSION)
+    return max(candidates)
 
 # In Zip64 mode, we add a Zip64 extra field for every file (including using
 # ZIP64_VERSION instead of ZIP_VERSION) for *every* file, whether it is large
@@ -307,11 +363,12 @@ MOD_TIME = 0x6ca0
 # limits.
 
 class LocalFileHeader:
-    def __init__(self, compressed_size, uncompressed_size, crc, filename):
+    def __init__(self, compressed_size, uncompressed_size, crc, filename, compression_method=COMPRESSION_METHOD_DEFLATE):
         self.compressed_size = compressed_size
         self.uncompressed_size = uncompressed_size
         self.crc = crc
         self.filename = filename
+        self.compression_method = compression_method
 
     def serialize(self, zip64=False):
         # APPNOTE.TXT 4.5.3 says that in the local file header, unlike the
@@ -330,9 +387,9 @@ class LocalFileHeader:
         # APPNOTE.TXT 4.3.7
         return struct.pack("<LHHHHHLLLHH",
             0x04034b50, # signature
-            zip64 and ZIP64_VERSION or ZIP_VERSION,   # version needed to extract
+            zip_version(self.compression_method, zip64), # version needed to extract
             0,          # flags
-            COMPRESSION_METHOD_DEFLATE, # compression method
+            self.compression_method,    # compression method
             MOD_TIME,   # modification time
             MOD_DATE,   # modification date
             self.crc,   # CRC-32
@@ -350,6 +407,7 @@ class CentralDirectoryHeader:
         self.uncompressed_size = template.uncompressed_size
         self.crc = template.crc
         self.filename = template.filename
+        self.compression_method = template.compression_method
 
     def serialize(self, zip64=False):
         # Even in Zip64 mode, we assume that the only field that needs to be
@@ -374,10 +432,10 @@ class CentralDirectoryHeader:
         # APPNOTE.TXT 4.3.12
         return struct.pack("<LHHHHHHLLLHHHHHLL",
             0x02014b50, # signature
-            (0<<8) | (zip64 and ZIP64_VERSION or ZIP_VERSION),  # version made by (0 - MS-DOS/FAT compatible)
-            zip64 and ZIP64_VERSION or ZIP_VERSION,             # version needed to extract
+            (0<<8) | zip_version(self.compression_method, zip64),   # version made by (0 - MS-DOS/FAT compatible)
+            zip_version(self.compression_method, zip64),            # version needed to extract
             0,          # flags
-            COMPRESSION_METHOD_DEFLATE, # compression method
+            self.compression_method,    # compression method
             MOD_TIME,   # modification time
             MOD_DATE,   # modification date
             self.crc,   # CRC-32
@@ -398,7 +456,7 @@ class EndOfCentralDirectory:
         self.cd_size = cd_size
         self.cd_offset = cd_offset
 
-    def serialize(self, zip64=False):
+    def serialize(self, zip64=False, compression_method=COMPRESSION_METHOD_DEFLATE):
         result = []
         if zip64:
             # APPNOTE.TXT 4.3.14 Zip64 end of central directory record
@@ -410,8 +468,8 @@ class EndOfCentralDirectory:
             result.append(struct.pack("<LQHHLLQQQQ",
                 0x06064b50, # signature
                 44,         # size of remainder of Zip64 EOCD
-                ZIP64_VERSION,  # version made by
-                ZIP64_VERSION,  # version needed to extract
+                zip_version(compression_method, zip64), # version made by
+                zip_version(compression_method, zip64), # version needed to extract
                 0,          # number of this disk
                 0,          # disk of central directory
                 self.cd_num_entries,    # number of central directory entries on this disk
@@ -450,11 +508,15 @@ def filename_for_index(i):
             break
     return bytes(letters)
 
-def write_zip_full_reuse(f, num_copies, compressed_size=None, max_uncompressed_size=None, zip64=False):
-    compressed_data, n, crc_matrix = bulk_deflate(CHOSEN_BYTE, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
+def write_zip_full_reuse(f, num_copies, compressed_size=None, max_uncompressed_size=None, compression_method=COMPRESSION_METHOD_DEFLATE, zip64=False):
+    bulk_compress = {
+        COMPRESSION_METHOD_BZIP2: bulk_bzip2,
+        COMPRESSION_METHOD_DEFLATE: bulk_deflate,
+    }[compression_method]
+    compressed_data, n, crc_matrix = bulk_compress(CHOSEN_BYTE, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
 
     main_crc = crc_matrix_apply(crc_matrix)
-    main_file = LocalFileHeader(len(compressed_data), n, main_crc, filename_for_index(0))
+    main_file = LocalFileHeader(len(compressed_data), n, main_crc, filename_for_index(0), compression_method=compression_method)
 
     offset = 0
     main_file_offset = offset
@@ -468,11 +530,14 @@ def write_zip_full_reuse(f, num_copies, compressed_size=None, max_uncompressed_s
         offset += f.write(cd_header.serialize(zip64=zip64))
     cd_size = offset - cd_offset
 
-    offset += f.write(EndOfCentralDirectory(num_copies, cd_size, cd_offset).serialize(zip64=zip64))
+    offset += f.write(EndOfCentralDirectory(num_copies, cd_size, cd_offset).serialize(compression_method=compression_method, zip64=zip64))
 
     return offset
 
-def write_zip_quoted_reuse(f, num_additional, compressed_size=None, max_uncompressed_size=None, zip64=False):
+def write_zip_quoted_reuse(f, num_additional, compressed_size=None, max_uncompressed_size=None, compression_method=COMPRESSION_METHOD_DEFLATE, zip64=False):
+    # This construction relies on DEFLATE non-compressed blocks.
+    assert compression_method == COMPRESSION_METHOD_DEFLATE
+
     class FileRecord:
         def __init__(self, header, data):
             self.header = header
@@ -482,7 +547,7 @@ def write_zip_quoted_reuse(f, num_additional, compressed_size=None, max_uncompre
     # actually contains the bulk of the compressed data.
     files = []
     compressed_data, n, crc_matrix = bulk_deflate(CHOSEN_BYTE, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
-    header = LocalFileHeader(len(compressed_data), n, crc_matrix_apply(crc_matrix), filename_for_index(num_additional))
+    header = LocalFileHeader(len(compressed_data), n, crc_matrix_apply(crc_matrix), filename_for_index(num_additional), compression_method=compression_method)
     files.append(FileRecord(header, compressed_data))
 
     crc_matrix = precompute_crc_matrix_repeated(b"\x00", n)
@@ -527,6 +592,7 @@ def write_zip_quoted_reuse(f, num_additional, compressed_size=None, max_uncompre
             len(next_header_bytes) + next_file.header.uncompressed_size,
             new_crc,
             filename_for_index(num_additional - i - 1),
+            compression_method=compression_method,
         )
         files.append(FileRecord(header, quote))
 
@@ -543,19 +609,25 @@ def write_zip_quoted_reuse(f, num_additional, compressed_size=None, max_uncompre
         offset += f.write(cd_header.serialize(zip64=zip64))
     cd_size = offset - cd_offset
 
-    offset += f.write(EndOfCentralDirectory(len(central_directory), cd_size, cd_offset).serialize(zip64=zip64))
+    offset += f.write(EndOfCentralDirectory(len(central_directory), cd_size, cd_offset).serialize(compression_method=compression_method, zip64=zip64))
 
     return offset
 
 def main():
-    opts, args = getopt.gnu_getopt(sys.argv[1:], "", ["alphabet=", "compressed-size=", "max-uncompressed-size=", "mode=", "num-files=", "zip64"])
+    opts, args = getopt.gnu_getopt(sys.argv[1:], "", ["algorithm=", "alphabet=", "compressed-size=", "max-uncompressed-size=", "mode=", "num-files=", "zip64"])
     assert not args, args
     global FILENAME_ALPHABET
+    compression_method = COMPRESSION_METHOD_DEFLATE
     compressed_size = None
     max_uncompressed_size = None
     zip64 = False
     for o, a in opts:
-        if o == "--alphabet":
+        if o == "--algorithm":
+            compression_method = {
+                "bzip2": COMPRESSION_METHOD_BZIP2,
+                "deflate": COMPRESSION_METHOD_DEFLATE,
+            }[a]
+        elif o == "--alphabet":
             assert len(set(sorted(a))) == len(a), a
             FILENAME_ALPHABET = bytes(a, "utf-8")
         elif o == "--compressed-size":
@@ -569,9 +641,9 @@ def main():
         elif o == "--zip64":
             zip64 = True
     if mode == "full_overlap":
-        write_zip_full_reuse(sys.stdout.buffer, num_files, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size, zip64=zip64)
+        write_zip_full_reuse(sys.stdout.buffer, num_files, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size, compression_method=compression_method, zip64=zip64)
     elif mode == "quoted_overlap":
-        write_zip_quoted_reuse(sys.stdout.buffer, num_files - 1, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size, zip64=zip64)
+        write_zip_quoted_reuse(sys.stdout.buffer, num_files - 1, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size, compression_method=compression_method, zip64=zip64)
     else:
         raise ValueError("unknown mode")
 
