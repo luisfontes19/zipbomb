@@ -347,7 +347,7 @@ def zip_version(compression_method=COMPRESSION_METHOD_DEFLATE, zip64=False):
 # In Zip64 mode, we add a Zip64 extra field for every file (including using
 # ZIP64_VERSION instead of ZIP_VERSION) for *every* file, whether it is large
 # enough to need it or not. Past a certain threshold, every file *does* need it
-# anyway. I t may be slightly better for compatibility to write every file in
+# anyway. It may be slightly better for compatibility to write every file in
 # either Zip64 or non-Zip64 mode. See the block comment in putextended in
 # zipfile.c of Info-ZIP Zip 3.0 (though the worst incompatibility has to do with
 # data descriptors, which we don't use).
