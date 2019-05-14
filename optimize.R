@@ -12,11 +12,11 @@ B <- 36	# size of filename alphabet
 # (36^i-1)/35 (a base-36 repunit) filenames are at least i bytes long.
 # The greatest value of i that does not exceed the length of the nth
 # filename is
-#   d = floor(log_36(n/(36/35)))
+#   d = floor(log_36(n/(36/35))) + 1
 # For each value of i, we add 1 byte for each filename that is at least
 # i bytes long.
-#   Σ_i=0…d n - (36^i-1)/35
-#   = dn - Σ_i=0…d (36^i-1)/35
+#   Σ_i=1…d n - (36^i-1)/35
+#   = dn - Σ_i=1…d (36^i-1)/35
 #   = dn - ((36^d-1)*36/35² - d/35)
 # where the last equality comes from adapting a formula for the sum of
 # base-10 repunits: https://oeis.org/A014824.
