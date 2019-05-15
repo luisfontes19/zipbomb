@@ -320,3 +320,18 @@ params <- QUOTED_DEFLATE_64_optimize_for_zipped_size(zipped_size_opt)
 params
 print(c("zipped size", QUOTED_64_zipped_size_given_compressed_size(params$compressed_size, params$num_files)))
 print(c("unzipped size", QUOTED_DEFLATE_64_unzipped_size_given_compressed_size(params$compressed_size, params$num_files)))
+
+QUOTED_DEFLATE_needs_zip64 <- function(compressed_size, num_files) {
+	(num_files > 0xfffe) | (DEFLATE_uncompressed_size_given_compressed_size(compressed_size) + 30*(num_files-1) + sum_filename_lengths(num_files) - sum_filename_lengths(1) > 0xfffffffe)
+}
+
+cat("\n\nsmallest zipped_size that requires Zip64\n")
+zipped_size_opt <- bsearch_fn(1*1024*1024, NA, function(zipped_size) {
+        params <- QUOTED_DEFLATE_optimize_for_zipped_size(zipped_size)
+	QUOTED_DEFLATE_needs_zip64(params$compressed_size, params$num_files)
+})
+params <- QUOTED_DEFLATE_optimize_for_zipped_size(zipped_size_opt)
+params
+print(c("zipped size", QUOTED_zipped_size_given_compressed_size(params$compressed_size, params$num_files)))
+print(c("unzipped size", QUOTED_DEFLATE_unzipped_size_given_compressed_size(params$compressed_size, params$num_files)))
+DEFLATE_uncompressed_size_given_compressed_size(params$compressed_size) + 30*(params$num_files-1) + sum_filename_lengths(params$num_files) - sum_filename_lengths(1)
