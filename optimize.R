@@ -263,38 +263,38 @@ QUOTED_DEFLATE_64_optimize_for_zipped_size <- function(zipped_size) {
 	list(compressed_size=compressed_size_opt, num_files=num_files_opt)
 }
 
-cat("\n\noptimize overlap.zip\n");
+cat("\n\noptimize overlap.zip\n")
 params <- FULL_DEFLATE_optimize_for_zipped_size(42374)
 params
 print(c("zipped size", FULL_zipped_size_given_compressed_size(params$compressed_size, params$num_files)))
 print(c("unzipped size", FULL_DEFLATE_unzipped_size_given_compressed_size(params$compressed_size, params$num_files)))
 
-cat("\n\noptimize bzip2 overlap\n");
+cat("\n\noptimize bzip2 overlap\n")
 params <- FULL_BZIP2_optimize_for_max_zipped_size(1024)
 params
 print(c("zipped size", FULL_zipped_size_given_compressed_size(params$compressed_size, params$num_files)))
 print(c("unzipped size", FULL_BZIP2_unzipped_size_given_compressed_size(params$compressed_size, params$num_files)))
 
-cat("\n\noptimize bzip2 overlap zip64\n");
+cat("\n\noptimize bzip2 overlap zip64\n")
 params <- FULL_BZIP2_64_optimize_for_max_zipped_size(1000000)
 params
 print(c("zipped size", FULL_64_zipped_size_given_compressed_size(params$compressed_size, params$num_files)))
 print(c("unzipped size", FULL_BZIP2_unzipped_size_given_compressed_size(params$compressed_size, params$num_files)))
 
-cat("\n\noptimize zbsm.zip\n");
+cat("\n\noptimize zbsm.zip\n")
 params <- QUOTED_DEFLATE_optimize_for_zipped_size(42374)
 params
 print(c("zipped size", QUOTED_zipped_size_given_compressed_size(params$compressed_size, params$num_files)))
 print(c("unzipped size", QUOTED_DEFLATE_unzipped_size_given_compressed_size(params$compressed_size, params$num_files)))
 
-cat("\n\noptimize zblg.zip\n");
+cat("\n\noptimize zblg.zip\n")
 # 65534, not 65535, because yauzl 2.10.0 requires Zip64 format with 65535 files: https://github.com/thejoshwolfe/yauzl/issues/108
 params <- QUOTED_DEFLATE_optimize_for_num_files(65534)
 params
 print(c("zipped size", QUOTED_DEFLATE_zipped_size_given_max_uncompressed_size(params$max_uncompressed_size, params$num_files)))
 print(c("unzipped size", QUOTED_DEFLATE_unzipped_size_given_max_uncompressed_size(params$max_uncompressed_size, params$num_files)))
 
-cat("\n\noptimize zbxl.zip\n");
+cat("\n\noptimize zbxl.zip\n")
 # Binary search for the smallest zipped_size that gets an unzipped_size greater
 # than the full recursive unzipped size of 42.zip.
 zipped_size_opt <- bsearch_fn(10*1024*1024, 100*1024*1024, function(zipped_size) {
@@ -307,7 +307,7 @@ params
 print(c("zipped size", QUOTED_64_zipped_size_given_compressed_size(params$compressed_size, params$num_files)))
 print(c("unzipped size", QUOTED_DEFLATE_64_unzipped_size_given_compressed_size(params$compressed_size, params$num_files)))
 
-cat("\n\noptimize zbxxl.zip\n");
+cat("\n\noptimize zbxxl.zip\n")
 # Binary search for the smallest zipped_size that gets an unzipped_size greater
 # than 2^64-1 (actually 2^64 because of floating-point imprecision).
 zipped_size_opt <- bsearch_fn(10*1024*1024, NA, function(zipped_size) {
