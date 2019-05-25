@@ -76,7 +76,7 @@ DEFLATE_uncompressed_size_given_compressed_size <- function(compressed_size) {
 
 DEFLATE_compressed_size_given_uncompressed_size <- function(uncompressed_size) {
 	# Account for prefix and suffix.
-	15 + 1 + ((uncompressed_size-1-1032) %/% 1032)
+	15 + 1 + ceiling((uncompressed_size-1-1032) / 1032)
 }
 
 DEFLATE_uncompressed_size_given_max_uncompressed_size <- function(max_uncompressed_size) {
