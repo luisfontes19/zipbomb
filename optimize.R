@@ -135,6 +135,10 @@ BZIP2_compressed_size_given_max_compressed_size <- function(max_compressed_size)
 	4 + ((max_compressed_size-4-10) %/% 32) * 32 + 10
 }
 
+BZIP2_compressed_size_given_max_uncompressed_size <- function(max_uncompressed_size) {
+	4 + (max_uncompressed_size %/% 45899235) * 32 + 10
+}
+
 
 ## full overlap construction
 
@@ -203,6 +207,13 @@ QUOTED_DEFLATE_unzipped_size_given_max_uncompressed_size <- function(max_uncompr
 	QUOTED_unzipped_size_given_uncompressed_size(uncompressed_size, num_files, extra_quoting)
 }
 
+QUOTED_BZIP2_unzipped_size_given_compressed_size <- function(compressed_size, num_files, extra_quoting=FALSE) {
+	if (!extra_quoting)
+		stop()
+	uncompressed_size <- BZIP2_uncompressed_size_given_compressed_size(compressed_size)
+	QUOTED_unzipped_size_given_uncompressed_size(uncompressed_size, num_files, extra_quoting)
+}
+
 QUOTED_64_headers_size <- function(num_files, extra_quoting) {
 	num_quot_ext <- if (extra_quoting) cmin(num_files - 1, max_num_quot_ext_zip64) else 0
 	num_quot_def <- cmax(num_files - 1 - num_quot_ext, 0)
@@ -222,6 +233,27 @@ QUOTED_64_unzipped_size_given_uncompressed_size <- function(uncompressed_size, n
 QUOTED_DEFLATE_64_unzipped_size_given_compressed_size <- function(compressed_size, num_files, extra_quoting=FALSE) {
 	uncompressed_size <- DEFLATE_uncompressed_size_given_compressed_size(compressed_size)
 	QUOTED_64_unzipped_size_given_uncompressed_size(uncompressed_size, num_files, extra_quoting)
+}
+
+QUOTED_BZIP2_64_unzipped_size_given_compressed_size <- function(compressed_size, num_files, extra_quoting=FALSE) {
+	if (!extra_quoting)
+		stop()
+	uncompressed_size <- BZIP2_uncompressed_size_given_compressed_size(compressed_size)
+	QUOTED_64_unzipped_size_given_uncompressed_size(uncompressed_size, num_files, extra_quoting)
+}
+
+QUOTED_BZIP2_zipped_size_given_max_uncompressed_size <- function(max_uncompressed_size, num_files, extra_quoting=FALSE) {
+	if (!extra_quoting)
+		stop()
+	compressed_size <- BZIP2_compressed_size_given_max_uncompressed_size(max_uncompressed_size)
+	QUOTED_zipped_size_given_compressed_size(compressed_size, num_files, extra_quoting)
+}
+
+QUOTED_BZIP2_unzipped_size_given_max_uncompressed_size <- function(max_uncompressed_size, num_files, extra_quoting=FALSE) {
+	if (!extra_quoting)
+		stop()
+	compressed_size <- BZIP2_compressed_size_given_max_uncompressed_size(max_uncompressed_size)
+	QUOTED_BZIP2_unzipped_size_given_compressed_size(compressed_size, num_files, extra_quoting)
 }
 
 
@@ -292,6 +324,35 @@ QUOTED_DEFLATE_64_optimize_for_zipped_size <- function(zipped_size, extra_quotin
 	list(compressed_size=compressed_size_opt, num_files=num_files_opt)
 }
 
+QUOTED_BZIP2_optimize_for_max_zipped_size <- function(max_zipped_size, extra_quoting=FALSE) {
+	if (!extra_quoting)
+		stop()
+	num_files_opt <- argmax_fn(1:(max_zipped_size/(lfh+cdh+quot_ext)), function(num_files) {
+		compressed_size <- BZIP2_compressed_size_given_max_compressed_size(max_zipped_size - QUOTED_headers_size(num_files, extra_quoting))
+		QUOTED_BZIP2_unzipped_size_given_compressed_size(compressed_size, num_files, extra_quoting) / QUOTED_zipped_size_given_compressed_size(compressed_size, num_files, extra_quoting)
+	})
+	compressed_size_opt <- BZIP2_compressed_size_given_max_compressed_size(max_zipped_size - QUOTED_headers_size(num_files_opt, extra_quoting))
+	list(compressed_size=compressed_size_opt, num_files=num_files_opt)
+}
+
+QUOTED_BZIP2_optimize_for_num_files <- function(num_files, extra_quoting=TRUE) {
+	if (!extra_quoting)
+		stop()
+	# bzip2 allows only extra-field quoting, not DEFLATE quoting, so there is no file size expansion.
+	list(max_uncompressed_size=2^32 - 2, num_files=num_files)
+}
+
+QUOTED_BZIP2_64_optimize_for_max_zipped_size <- function(max_zipped_size, extra_quoting=FALSE) {
+	if (!extra_quoting)
+		stop()
+	num_files_opt <- argmax_fn(1:(max_zipped_size/(lfh_zip64+cdh_zip64+quot_ext)), function(num_files) {
+		compressed_size <- BZIP2_compressed_size_given_max_compressed_size(max_zipped_size - QUOTED_64_headers_size(num_files, extra_quoting))
+		QUOTED_BZIP2_64_unzipped_size_given_compressed_size(compressed_size, num_files, extra_quoting) / QUOTED_64_zipped_size_given_compressed_size(compressed_size, num_files, extra_quoting)
+	})
+	compressed_size_opt <- BZIP2_compressed_size_given_max_compressed_size(max_zipped_size - QUOTED_64_headers_size(num_files_opt, extra_quoting))
+	list(compressed_size=compressed_size_opt, num_files=num_files_opt)
+}
+
 cat("\n\noptimize overlap.zip\n")
 params <- FULL_DEFLATE_optimize_for_zipped_size(42374)
 params
@@ -303,6 +364,26 @@ params <- FULL_BZIP2_optimize_for_max_zipped_size(1024)
 params
 print(c("zipped size", FULL_zipped_size_given_compressed_size(params$compressed_size, params$num_files)))
 print(c("unzipped size", FULL_BZIP2_unzipped_size_given_compressed_size(params$compressed_size, params$num_files)))
+
+# bzip2 quoted overlap only works with extra-field quoting.
+cat("\n\noptimize bzip2 quoted overlap\n")
+params <- QUOTED_BZIP2_optimize_for_max_zipped_size(1024, extra_quoting=TRUE)
+params
+print(c("zipped size", QUOTED_zipped_size_given_compressed_size(params$compressed_size, params$num_files, extra_quoting=TRUE)))
+print(c("unzipped size", QUOTED_BZIP2_unzipped_size_given_compressed_size(params$compressed_size, params$num_files, extra_quoting=TRUE)))
+BZIP2_uncompressed_size_given_compressed_size(params$compressed_size)
+
+cat("\n\noptimize bzip2 zip64\n")
+params <- QUOTED_BZIP2_64_optimize_for_max_zipped_size(42374, extra_quoting=TRUE)
+params
+print(c("zipped size", QUOTED_64_zipped_size_given_compressed_size(params$compressed_size, params$num_files, extra_quoting=TRUE)))
+print(c("unzipped size", QUOTED_BZIP2_64_unzipped_size_given_compressed_size(params$compressed_size, params$num_files, extra_quoting=TRUE)))
+
+cat("\n\noptimize bzip2 quoted overlap non-zip64 max\n")
+params <- QUOTED_BZIP2_optimize_for_num_files(max_num_quot_ext+1, extra_quoting=TRUE)
+params
+print(c("zipped size", QUOTED_BZIP2_zipped_size_given_max_uncompressed_size(params$max_uncompressed_size, params$num_files, extra_quoting=TRUE)))
+print(c("unzipped size", QUOTED_BZIP2_unzipped_size_given_max_uncompressed_size(params$max_uncompressed_size, params$num_files, extra_quoting=TRUE)))
 
 cat("\n\noptimize bzip2 overlap zip64\n")
 params <- FULL_BZIP2_64_optimize_for_max_zipped_size(1000000)
@@ -399,7 +480,18 @@ QUOTED_DEFLATE_needs_zip64 <- function(compressed_size, num_files, extra_quoting
 	(num_files > 0xfffe) | (QUOTED_DEFLATE_largest_file(compressed_size, num_files, extra_quoting) > 0xfffffffe)
 }
 
-cat("\n\nsmallest zipped_size that requires Zip64\n")
+QUOTED_BZIP2_largest_file <- function(compressed_size, num_files, extra_quoting=FALSE) {
+	if (!extra_quoting)
+		stop()
+	# no file size expansion with bzip2, because of only extra-field quoting
+	BZIP2_uncompressed_size_given_compressed_size(compressed_size)
+}
+
+QUOTED_BZIP2_needs_zip64 <- function(compressed_size, num_files, extra_quoting=FALSE) {
+	QUOTED_BZIP2_largest_file(compressed_size, num_files, extra_quoting) > 0xfffffffe
+}
+
+cat("\n\nsmallest DEFLATE zipped_size that requires Zip64\n")
 zipped_size_opt <- bsearch_fn(1*1024*1024, NA, function(zipped_size) {
 	params <- QUOTED_DEFLATE_optimize_for_zipped_size(zipped_size)
 	QUOTED_DEFLATE_needs_zip64(params$compressed_size, params$num_files)
@@ -410,7 +502,7 @@ print(c("zipped size", QUOTED_zipped_size_given_compressed_size(params$compresse
 print(c("unzipped size", QUOTED_DEFLATE_unzipped_size_given_compressed_size(params$compressed_size, params$num_files)))
 QUOTED_DEFLATE_largest_file(params$compressed_size, params$num_files)
 
-cat("\n\nsmallest zipped_size with extra-field quoting that requires Zip64\n")
+cat("\n\nsmallest DEFLATE zipped_size with extra-field quoting that requires Zip64\n")
 zipped_size_opt <- bsearch_fn(1*1024*1024, NA, function(zipped_size) {
 	params <- QUOTED_DEFLATE_optimize_for_zipped_size(zipped_size, extra_quoting=TRUE)
 	QUOTED_DEFLATE_needs_zip64(params$compressed_size, params$num_files, extra_quoting=TRUE)
@@ -420,3 +512,14 @@ params
 print(c("zipped size", QUOTED_zipped_size_given_compressed_size(params$compressed_size, params$num_files, extra_quoting=TRUE)))
 print(c("unzipped size", QUOTED_DEFLATE_unzipped_size_given_compressed_size(params$compressed_size, params$num_files, extra_quoting=TRUE)))
 QUOTED_DEFLATE_largest_file(params$compressed_size, params$num_files, extra_quoting=TRUE)
+
+cat("\n\nsmallest bzip2 zipped_size with extra-field quoting that requires Zip64\n")
+zipped_size_opt <- bsearch_fn(1*1024, NA, function(max_zipped_size) {
+	params <- QUOTED_BZIP2_optimize_for_max_zipped_size(max_zipped_size, extra_quoting=TRUE)
+	QUOTED_BZIP2_needs_zip64(params$compressed_size, params$num_files, extra_quoting=TRUE)
+})
+params <- QUOTED_BZIP2_optimize_for_max_zipped_size(zipped_size_opt, extra_quoting=TRUE)
+params
+print(c("zipped size", QUOTED_zipped_size_given_compressed_size(params$compressed_size, params$num_files, extra_quoting=TRUE)))
+print(c("unzipped size", QUOTED_BZIP2_unzipped_size_given_compressed_size(params$compressed_size, params$num_files, extra_quoting=TRUE)))
+QUOTED_BZIP2_largest_file(params$compressed_size, params$num_files, extra_quoting=TRUE)

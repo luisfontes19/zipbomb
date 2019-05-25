@@ -1,7 +1,7 @@
 ZIPBOMB = python3 zipbomb
 
 .PHONY: all
-all: overlap.zip zbsm.zip zblg.zip zbxl.zip
+all: overlap.zip zbsm.zip zblg.zip zbxl.zip zbbz2.zip
 
 # 16-bit hex tag ID to use for extra-field quoting.
 EXTRA = 9999
@@ -23,6 +23,9 @@ zbxl.zip:
 	$(ZIPBOMB) --mode=quoted_overlap --num-files=190023 --compressed-size=22982788 --zip64 > "$@"
 zbxl.extra.zip:
 	$(ZIPBOMB) --mode=quoted_overlap --num-files=190023 --compressed-size=22982788 --zip64 --extra=$(EXTRA) > "$@"
+
+zbbz2.zip:
+	$(ZIPBOMB) --mode=quoted_overlap --algorithm=bzip2 --num-files=1809 --max-uncompressed-size=4294967294 --extra=$(EXTRA) > "$@"
 
 # Not made by default.
 zbxxl.zip:
