@@ -310,7 +310,7 @@ print(c("unzipped size", QUOTED_DEFLATE_64_unzipped_size_given_compressed_size(p
 cat("\n\noptimize zbxxl.zip\n")
 # Binary search for the smallest zipped_size that gets an unzipped_size greater
 # than 2^64-1 (actually 2^64 because of floating-point imprecision).
-zipped_size_opt <- bsearch_fn(10*1024*1024, NA, function(zipped_size) {
+zipped_size_opt <- bsearch_fn(1*1024*1024*1024, NA, function(zipped_size) {
 	params <- QUOTED_DEFLATE_64_optimize_for_zipped_size(zipped_size)
 	unzipped_size <- QUOTED_DEFLATE_64_unzipped_size_given_compressed_size(params$compressed_size, params$num_files)
 	cat(sprintf("%.f %.5f\n", zipped_size, log(unzipped_size, 2)))
