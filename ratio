@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+
+# Usage: ratio ZIPFILE [ZIPFILE]...
+
+import os
+import sys
+import zipfile
+
+for filename in sys.argv[1:]:
+    with zipfile.ZipFile(filename) as z:
+        zipped_size = os.stat(filename).st_size
+        unzipped_size = sum(info.file_size for info in z.infolist())
+        print("{}\t{} / {}\t{}".format(filename, unzipped_size, zipped_size, float(unzipped_size) / zipped_size))
