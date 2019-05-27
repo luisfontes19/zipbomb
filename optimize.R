@@ -327,7 +327,7 @@ QUOTED_DEFLATE_needs_zip64 <- function(compressed_size, num_files) {
 
 cat("\n\nsmallest zipped_size that requires Zip64\n")
 zipped_size_opt <- bsearch_fn(1*1024*1024, NA, function(zipped_size) {
-        params <- QUOTED_DEFLATE_optimize_for_zipped_size(zipped_size)
+	params <- QUOTED_DEFLATE_optimize_for_zipped_size(zipped_size)
 	QUOTED_DEFLATE_needs_zip64(params$compressed_size, params$num_files)
 })
 params <- QUOTED_DEFLATE_optimize_for_zipped_size(zipped_size_opt)
