@@ -6,6 +6,7 @@ import getopt
 import math
 import struct
 import sys
+import zipfile
 
 
 CHOSEN_BYTE = ord(b"a") # homage to 42.zip
@@ -341,10 +342,9 @@ MOD_DATE = 0x0548
 MOD_TIME = 0x6ca0
 
 def zip_version(compression_method=COMPRESSION_METHOD_DEFLATE, zip64=False):
-    candidates = [{
-        COMPRESSION_METHOD_BZIP2: ZIP_BZIP2_VERSION,
-        COMPRESSION_METHOD_DEFLATE: ZIP_VERSION,
-    }[compression_method]]
+    candidates = [ZIP_VERSION]
+    if compression_method==COMPRESSION_METHOD_BZIP2:
+        candidates.append(ZIP_BZIP2_VERSION)
     if zip64:
         candidates.append(ZIP64_VERSION)
     return max(candidates)
@@ -517,11 +517,16 @@ def filename_for_index(i):
             break
     return bytes(letters)
 
-def write_zip_no_overlap(f, num_files, compressed_size=None, max_uncompressed_size=None, compression_method=COMPRESSION_METHOD_DEFLATE, zip64=False, **kwargs):
+def write_zip_no_overlap(f, num_files, compressed_size=None, max_uncompressed_size=None, compression_method=COMPRESSION_METHOD_DEFLATE, zip64=False, template=[], **kwargs):
     kernel, n, crc_matrix = BULK_COMPRESS[compression_method](CHOSEN_BYTE, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
-
     central_directory = []
     offset = 0
+
+    for file, compressed_data in template:
+        central_directory.append(CentralDirectoryHeader(offset, file))
+        offset += f.write(file.serialize(zip64=zip64))
+        offset += f.write(compressed_data)
+
     for i in range(num_files):
         file = LocalFileHeader(len(kernel), n, crc_matrix_apply(crc_matrix), filename_for_index(i), compression_method=compression_method)
         central_directory.append(CentralDirectoryHeader(offset, file))
@@ -533,33 +538,40 @@ def write_zip_no_overlap(f, num_files, compressed_size=None, max_uncompressed_si
         offset += f.write(cd_header.serialize(zip64=zip64))
     cd_size = offset - cd_offset
 
-    offset += f.write(EndOfCentralDirectory(num_files, cd_size, cd_offset).serialize(zip64=zip64, compression_method=compression_method))
+    offset += f.write(EndOfCentralDirectory(len(central_directory), cd_size, cd_offset).serialize(zip64=zip64, compression_method=compression_method))
 
     return offset
 
-def write_zip_full_overlap(f, num_files, compressed_size=None, max_uncompressed_size=None, compression_method=COMPRESSION_METHOD_DEFLATE, zip64=False, **kwargs):
+def write_zip_full_overlap(f, num_files, compressed_size=None, max_uncompressed_size=None, compression_method=COMPRESSION_METHOD_DEFLATE, zip64=False, template=[], **kwargs):
     kernel, n, crc_matrix = BULK_COMPRESS[compression_method](CHOSEN_BYTE, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
+    central_directory = []
+    offset = 0
+
+    for file, compressed_data in template:
+        central_directory.append(CentralDirectoryHeader(offset, file))
+        offset += f.write(file.serialize(zip64=zip64))
+        offset += f.write(compressed_data)
 
     main_crc = crc_matrix_apply(crc_matrix)
     main_file = LocalFileHeader(len(kernel), n, main_crc, filename_for_index(0), compression_method=compression_method)
-
-    offset = 0
     main_file_offset = offset
     offset += f.write(main_file.serialize(zip64=zip64))
     offset += f.write(kernel)
 
     cd_offset = offset
+    for cd_header in central_directory:
+        offset += f.write(cd_header.serialize(zip64=zip64))
     for i in range(num_files):
         cd_header = CentralDirectoryHeader(main_file_offset, main_file)
         cd_header.filename = filename_for_index(i)
         offset += f.write(cd_header.serialize(zip64=zip64))
     cd_size = offset - cd_offset
 
-    offset += f.write(EndOfCentralDirectory(num_files, cd_size, cd_offset).serialize(compression_method=compression_method, zip64=zip64))
+    offset += f.write(EndOfCentralDirectory(len(central_directory)+num_files, cd_size, cd_offset).serialize(compression_method=compression_method, zip64=zip64))
 
     return offset
 
-def write_zip_quoted_overlap(f, num_files, compressed_size=None, max_uncompressed_size=None, compression_method=COMPRESSION_METHOD_DEFLATE, zip64=False, extra_tag=None):
+def write_zip_quoted_overlap(f, num_files, compressed_size=None, max_uncompressed_size=None, compression_method=COMPRESSION_METHOD_DEFLATE, zip64=False, template=[], extra_tag=None):
     class FileRecord:
         def __init__(self, header, data):
             self.header = header
@@ -643,6 +655,9 @@ def write_zip_quoted_overlap(f, num_files, compressed_size=None, max_uncompresse
         )
         files.append(FileRecord(header, b""))
 
+    for header, data in reversed(template):
+        files.append(FileRecord(header, data))
+
     central_directory = []
     offset = 0
     while files:
@@ -660,8 +675,21 @@ def write_zip_quoted_overlap(f, num_files, compressed_size=None, max_uncompresse
 
     return offset
 
+def load_template(filename):
+    result = []
+    with open(filename, "rb") as f:
+        with zipfile.ZipFile(filename) as z:
+            for info in z.infolist():
+                lfh = LocalFileHeader(info.compress_size, info.file_size, info.CRC, info.filename.encode("cp437"), info.compress_type)
+                f.seek(info.header_offset+26)
+                filename_length, extra_length = struct.unpack("<HH", f.read(4))
+                f.seek(filename_length + extra_length, 1)
+                data = f.read(info.compress_size)
+                result.append((lfh, data))
+    return result
+
 def main():
-    opts, args = getopt.gnu_getopt(sys.argv[1:], "", ["algorithm=", "alphabet=", "compressed-size=", "extra=", "max-uncompressed-size=", "mode=", "num-files=", "zip64"])
+    opts, args = getopt.gnu_getopt(sys.argv[1:], "", ["algorithm=", "alphabet=", "compressed-size=", "extra=", "max-uncompressed-size=", "mode=", "num-files=", "template=", "zip64"])
     assert not args, args
     global FILENAME_ALPHABET
     mode = write_zip_quoted_overlap
@@ -669,6 +697,7 @@ def main():
     compressed_size = None
     max_uncompressed_size = None
     extra_tag = None
+    template_filenames = []
     zip64 = False
     for o, a in opts:
         if o == "--algorithm":
@@ -698,12 +727,19 @@ def main():
             }[a]
         elif o == "--num-files":
             num_files = int(a)
+        elif o == "--template":
+            template_filenames.append(a)
         elif o == "--zip64":
             zip64 = True
     if extra_tag is not None and mode != write_zip_quoted_overlap:
         print("--extra only makes sense with --mode=quoted_overlap", file=sys.stderr)
         sys.exit(1)
-    mode(sys.stdout.buffer, num_files, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size, compression_method=compression_method, zip64=zip64, extra_tag=extra_tag)
+
+    template = []
+    for filename in template_filenames:
+        template.extend(load_template(filename))
+
+    mode(sys.stdout.buffer, num_files, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size, compression_method=compression_method, zip64=zip64, template=template, extra_tag=extra_tag)
 
 if __name__ == "__main__":
     main()
