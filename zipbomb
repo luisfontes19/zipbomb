@@ -518,15 +518,15 @@ def filename_for_index(i):
     return bytes(letters)
 
 def write_zip_no_overlap(f, num_files, compressed_size=None, max_uncompressed_size=None, compression_method=COMPRESSION_METHOD_DEFLATE, zip64=False, **kwargs):
-    compressed_data, n, crc_matrix = BULK_COMPRESS[compression_method](CHOSEN_BYTE, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
+    kernel, n, crc_matrix = BULK_COMPRESS[compression_method](CHOSEN_BYTE, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
 
     cd = []
     offset = 0
     for i in range(num_files):
-        file = LocalFileHeader(len(compressed_data), n, crc_matrix_apply(crc_matrix), filename_for_index(i), compression_method=compression_method)
+        file = LocalFileHeader(len(kernel), n, crc_matrix_apply(crc_matrix), filename_for_index(i), compression_method=compression_method)
         cd.append(CentralDirectoryHeader(offset, file))
         offset += f.write(file.serialize(zip64=zip64))
-        offset += f.write(compressed_data)
+        offset += f.write(kernel)
 
     cd_offset = offset
     for cd_header in cd:
@@ -538,15 +538,15 @@ def write_zip_no_overlap(f, num_files, compressed_size=None, max_uncompressed_si
     return offset
 
 def write_zip_full_overlap(f, num_files, compressed_size=None, max_uncompressed_size=None, compression_method=COMPRESSION_METHOD_DEFLATE, zip64=False, **kwargs):
-    compressed_data, n, crc_matrix = BULK_COMPRESS[compression_method](CHOSEN_BYTE, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
+    kernel, n, crc_matrix = BULK_COMPRESS[compression_method](CHOSEN_BYTE, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
 
     main_crc = crc_matrix_apply(crc_matrix)
-    main_file = LocalFileHeader(len(compressed_data), n, main_crc, filename_for_index(0), compression_method=compression_method)
+    main_file = LocalFileHeader(len(kernel), n, main_crc, filename_for_index(0), compression_method=compression_method)
 
     offset = 0
     main_file_offset = offset
     offset += f.write(main_file.serialize(zip64=zip64))
-    offset += f.write(compressed_data)
+    offset += f.write(kernel)
 
     cd_offset = offset
     for i in range(num_files):
@@ -566,11 +566,11 @@ def write_zip_quoted_overlap(f, num_files, compressed_size=None, max_uncompresse
             self.data = data
 
     # We build the file table backwards on a stack, starting with the file that
-    # actually contains the bulk of the compressed data.
+    # contains the kernel.
     files = []
-    compressed_data, n, crc_matrix = BULK_COMPRESS[compression_method](CHOSEN_BYTE, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
-    header = LocalFileHeader(len(compressed_data), n, crc_matrix_apply(crc_matrix), filename_for_index(num_files-1), compression_method=compression_method)
-    files.append(FileRecord(header, compressed_data))
+    kernel, n, crc_matrix = BULK_COMPRESS[compression_method](CHOSEN_BYTE, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
+    header = LocalFileHeader(len(kernel), n, crc_matrix_apply(crc_matrix), filename_for_index(num_files-1), compression_method=compression_method)
+    files.append(FileRecord(header, kernel))
 
     crc_matrix = precompute_crc_matrix_repeated(b"\x00", n)
 
