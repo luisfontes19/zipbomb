@@ -520,16 +520,16 @@ def filename_for_index(i):
 def write_zip_no_overlap(f, num_files, compressed_size=None, max_uncompressed_size=None, compression_method=COMPRESSION_METHOD_DEFLATE, zip64=False, **kwargs):
     kernel, n, crc_matrix = BULK_COMPRESS[compression_method](CHOSEN_BYTE, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
 
-    cd = []
+    central_directory = []
     offset = 0
     for i in range(num_files):
         file = LocalFileHeader(len(kernel), n, crc_matrix_apply(crc_matrix), filename_for_index(i), compression_method=compression_method)
-        cd.append(CentralDirectoryHeader(offset, file))
+        central_directory.append(CentralDirectoryHeader(offset, file))
         offset += f.write(file.serialize(zip64=zip64))
         offset += f.write(kernel)
 
     cd_offset = offset
-    for cd_header in cd:
+    for cd_header in central_directory:
         offset += f.write(cd_header.serialize(zip64=zip64))
     cd_size = offset - cd_offset
 
