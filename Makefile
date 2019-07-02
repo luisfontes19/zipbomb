@@ -1,7 +1,7 @@
 ZIPBOMB = python3 zipbomb
 
 .PHONY: all
-all: overlap.zip zbsm.zip zblg.zip zbxl.zip zbbz2.zip
+all: overlap.zip zbsm.zip zbsm.extra.zip zblg.zip zblg.extra.zip zbxl.zip zbxl.extra.zip zbbz2.zip
 
 # 16-bit hex tag ID to use for extra-field quoting.
 EXTRA = 9999
