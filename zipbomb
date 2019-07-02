@@ -688,8 +688,27 @@ def load_template(filename):
                 result.append((lfh, data))
     return result
 
+def usage(file=sys.stdout):
+    print("""Usage:
+  {program_name} --num-files=N --compressed-size=N [OPTIONS...] > bomb.zip
+  {program_name} --num-files=N --max-uncompressed-size=N [OPTIONS...] > bomb.zip
+
+The --num-files option and either the --compressed-size or
+--max-uncompressed-size options are required.
+
+  --algorithm=ALG   ALG can be "deflate" (default) or "bzip2"
+  --alphabet=CHARS  alphabet for constructing filenames
+  --compressed-size=N  compressed size of the kernel
+  --extra=HHHH      use extra-field quoting with the type tag 0xHHHH
+  --max-uncompressed-size=N  maximum uncompressed size of the kernel
+  --mode=MODE       "no_overlap", "full_overlap", or "quoted_overlap" (default)
+  --num-files=N     number of files to contain, not counting template files
+  --template=ZIP    zip file containing other files to store in the zip bomb
+  --zip64           enable Zip64 extensions\
+""".format(program_name=sys.argv[0]), file=file)
+
 def main():
-    opts, args = getopt.gnu_getopt(sys.argv[1:], "", ["algorithm=", "alphabet=", "compressed-size=", "extra=", "max-uncompressed-size=", "mode=", "num-files=", "template=", "zip64"])
+    opts, args = getopt.gnu_getopt(sys.argv[1:], "h", ["algorithm=", "alphabet=", "compressed-size=", "extra=", "help", "max-uncompressed-size=", "mode=", "num-files=", "template=", "zip64"])
     assert not args, args
     global FILENAME_ALPHABET
     mode = write_zip_quoted_overlap
@@ -731,6 +750,10 @@ def main():
             template_filenames.append(a)
         elif o == "--zip64":
             zip64 = True
+        elif o in ("-h", "--help"):
+            usage()
+            sys.exit(1)
+
     if extra_tag is not None and mode != write_zip_quoted_overlap:
         print("--extra only makes sense with --mode=quoted_overlap", file=sys.stderr)
         sys.exit(1)
