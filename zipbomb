@@ -342,7 +342,7 @@ MOD_TIME = 0x6ca0
 
 def zip_version(compression_method=COMPRESSION_METHOD_DEFLATE, zip64=False):
     candidates = [ZIP_VERSION]
-    if compression_method==COMPRESSION_METHOD_BZIP2:
+    if compression_method == COMPRESSION_METHOD_BZIP2:
         candidates.append(ZIP_BZIP2_VERSION)
     if zip64:
         candidates.append(ZIP64_VERSION)
