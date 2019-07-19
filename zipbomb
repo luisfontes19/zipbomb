@@ -3,7 +3,6 @@
 import binascii
 import bz2
 import getopt
-import math
 import struct
 import sys
 import zipfile
