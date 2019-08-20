@@ -570,30 +570,31 @@ def write_zip_full_overlap(f, num_files, compressed_size=None, max_uncompressed_
 
     return offset
 
+# Optimization: cache calls to precompute_crc_matrix_repeated.
+crc_matrix_cache = {}
+def memo_crc_matrix_repeated(data, n):
+    val = crc_matrix_cache.get((data, n))
+    if val is not None:
+        return val
+    val = precompute_crc_matrix_repeated(b"\x00", n)
+    crc_matrix_cache[(data, n)] = val
+    return val
+
+# Compute the CRC of prefix+remainder, given the CRC of prefix, the CRC of
+# remainder, and a matrix that computes the effect of len(remainder) 0x00 bytes.
+#
+# Basically it's the xor of crc32(remainder) and crc32(prefix + zeroes), where
+# the latter quantity is the result of applying the matrix to crc32(prefix).
+def crc_combine(crc_prefix, crc_remainder, crc_matrix_zeroes):
+    # Undo the pre- and post-conditioning that crc_matrix_apply does, because
+    # crc_prefix and crc are already conditioned.
+    return crc_matrix_apply(crc_matrix_zeroes, crc_prefix ^ 0xffffffff) ^ 0xffffffff ^ crc_remainder
+
 def write_zip_quoted_overlap(f, num_files, compressed_size=None, max_uncompressed_size=None, compression_method=COMPRESSION_METHOD_DEFLATE, zip64=False, template=[], extra_tag=None):
     class FileRecord:
         def __init__(self, header, data):
             self.header = header
             self.data = data
-
-    # We build the file table backwards on a stack, starting with the file that
-    # contains the kernel.
-    files = []
-    kernel, n, crc_matrix = BULK_COMPRESS[compression_method](CHOSEN_BYTE, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
-    header = LocalFileHeader(len(kernel), n, crc_matrix_apply(crc_matrix), filename_for_index(num_files-1), compression_method=compression_method)
-    files.append(FileRecord(header, kernel))
-
-    crc_matrix = precompute_crc_matrix_repeated(b"\x00", n)
-
-    # Optimization: cache calls to precompute_crc_matrix_repeated.
-    crc_matrix_cache = {}
-    def memo_crc_matrix_repeated(data, n):
-        val = crc_matrix_cache.get((data, n))
-        if val is not None:
-            return val
-        val = precompute_crc_matrix_repeated(b"\x00", n)
-        crc_matrix_cache[(data, n)] = val
-        return val
 
     # Figure out how many files we can quote using the extra field.
     num_extra_length_files = 0
@@ -604,6 +605,22 @@ def write_zip_quoted_overlap(f, num_files, compressed_size=None, max_uncompresse
             num_extra_length_files += 1
         num_extra_length_files -= 1
 
+    # We build the file table backwards on a stack, starting with the file that
+    # contains the kernel.
+    files = []
+    kernel, kernel_uncompressed_size, kernel_crc_matrix = BULK_COMPRESS[compression_method](CHOSEN_BYTE, compressed_size=compressed_size, max_uncompressed_size=max_uncompressed_size)
+    header = LocalFileHeader(len(kernel), kernel_uncompressed_size, crc_matrix_apply(kernel_crc_matrix), filename_for_index(num_files-1), compression_method=compression_method)
+    files.append(FileRecord(header, kernel))
+
+    # An optimization compared to what's described in the paper is that our
+    # accumulator matrix doesn't represent the bytes of the kernel and all the
+    # preceding quoted local file headers, but just an equal number of 0x00
+    # bytes. We track the running CRC along with the matrix and use that with
+    # crc_combine to compute actual CRCs. This way is faster because we can
+    # memoize most of the calls to precompute_crc_matrix_repeated(b"\x00", n)
+    # because many local file headers share the same length.
+    crc_matrix = precompute_crc_matrix_repeated(b"\x00", kernel_uncompressed_size)
+
     # DEFLATE non-compressed block quoting, until there are few enough files
     # left to use extra field quoting.
     while compression_method == COMPRESSION_METHOD_DEFLATE and len(files) < num_files - num_extra_length_files:
@@ -612,19 +629,10 @@ def write_zip_quoted_overlap(f, num_files, compressed_size=None, max_uncompresse
         next_file = files[-1]
         next_header_bytes = next_file.header.serialize(zip64=zip64)
 
-        # Here we do a crc32_combine operation to compute the CRC of
-        # prefix+remainder, knowing crc32(prefix), crc32(remainder), and a
-        # matrix that computes the effect of len(remainder) 0x00 bytes.
-        # Basically it's the xor of crc32(remainder) and crc32(prefix + zeroes),
-        # where the latter quantity is the result of applying the matrix to
-        # crc32(prefix).
-        crc1 = binascii.crc32(next_header_bytes)
-        crc2 = next_file.header.crc
-        # Undo the pre- and post-conditioning that crc_matrix_apply does,
-        # because crc1 and crc2 are already conditioned.
-        new_crc = crc_matrix_apply(crc_matrix, crc1 ^ 0xffffffff) ^ 0xffffffff ^ crc2
-        # Next file will have an additional len(next_header_bytes) accumulated
-        # into crc_matrix.
+        # Find the CRC that results from prepending next_header_bytes to the
+        # following files, whose CRC we already know.
+        new_crc = crc_combine(binascii.crc32(next_header_bytes), next_file.header.crc, crc_matrix)
+        # Accumulate len(next_header_bytes) additional 0x00 bytes into crc_matrix.
         crc_matrix = matrix_mul(crc_matrix, memo_crc_matrix_repeated(b"\x00", len(next_header_bytes)))
 
         # Place a non-final non-compressed DEFLATE block (BFINAL=0, BTYPE=00)
@@ -639,7 +647,7 @@ def write_zip_quoted_overlap(f, num_files, compressed_size=None, max_uncompresse
             compression_method=compression_method,
         )
         files.append(FileRecord(header, quote))
-    # Extra field quoting.
+    # Extra-field quoting.
     while len(files) < num_files:
         next_file = files[-1]
         next_header_bytes = next_file.header.serialize(zip64=zip64)
