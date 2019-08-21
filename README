@@ -41,6 +41,12 @@ The script can run in one of three main modes:
 In quoted_overlap mode, you can additionally enable extra-field quoting;
 you need to provide a 4-digit hexadecimal tag type:
 	--mode=quoted_overlap --extra=9999
+In quoted_overlap mode, you can also specify to quote as many subsequent
+headers as possible, not just one. This produces slightly larger output
+file sizes and is useful whenever you are not constrained by maximum
+file size (when operating below the 0xffffffff file size limit, or when
+using Zip64).
+	--mode=quoted_overlap --giant-steps
 
 You can choose either DEFLATE or bzip2 as the compression algorithm.
 	--algorithm=deflate (default)
