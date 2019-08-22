@@ -707,7 +707,18 @@ The --num-files option and either the --compressed-size or
 """.format(program_name=sys.argv[0]), file=file)
 
 def main():
-    opts, args = getopt.gnu_getopt(sys.argv[1:], "h", ["algorithm=", "alphabet=", "compressed-size=", "extra=", "help", "max-uncompressed-size=", "mode=", "num-files=", "template=", "zip64"])
+    opts, args = getopt.gnu_getopt(sys.argv[1:], "h", [
+        "algorithm=",
+        "alphabet=",
+        "compressed-size=",
+        "extra=",
+        "help",
+        "max-uncompressed-size=",
+        "mode=",
+        "num-files=",
+        "template=",
+        "zip64",
+    ])
     assert not args, args
     global FILENAME_ALPHABET
     mode = write_zip_quoted_overlap
