@@ -423,7 +423,7 @@ class CentralDirectoryHeader:
         #
         # Also, we set the threshold for compressed_size and
         # local_file_header_offset at 0xfffffffe rather than 0xffffffff because
-        # Go archive/zip which (wrongly, IMO) requires a Zip64 extra field to be
+        # Go archive/zip (wrongly, IMO) requires a Zip64 extra field to be
         # present when either of the two latter fields is exactly 0xffffffff.
         # https://github.com/golang/go/issues/31692
         assert self.compressed_size <= 0xfffffffe, self.compressed_size
@@ -623,16 +623,16 @@ def write_zip_quoted_overlap(f, num_files, compressed_size=None, max_uncompresse
     # DEFLATE non-compressed block quoting, until there are few enough files
     # left to use extra field quoting.
     while compression_method == COMPRESSION_METHOD_DEFLATE and len(files) < num_files - num_extra_length_files:
-        # See how subsequent local file headers (and their own quoting blocks)
-        # we can quote here. Originally we only quoted the one originally
-        # following header, but it's better to quote as much as we can, because
-        # then we get a small bonus--5 bytes of output for each quoting header
-        # we manage to include. The --giant-steps option activates this feature.
-        # We don't want giant steps whenever we are trying to limit output file
-        # sizes, as in zblg.zip, so that the smallest file (the file containing
-        # the kernel) can be as large as possible. 
-        # Whatever the limit, we always need to quote at least one header in
-        # order to make the construction work.
+        # See how many subsequent local file headers (and their own quoting
+        # blocks) we can quote here. Originally we only quoted the one
+        # immediately following header, but it's better to quote as much as we
+        # can, because then we get a small bonus--5 bytes of output for each
+        # quoting header we manage to include. The --giant-steps option
+        # activates this feature. We don't want giant steps whenever we are
+        # trying to limit output file sizes, as in zblg.zip, so that the
+        # smallest file (the file containing the kernel) can be as large as
+        # possible. Whatever the limit, we always need to quote at least one
+        # header in order to make the construction work.
         header_bytes = files[0].header.serialize(zip64=zip64)
         num_quoted = len(header_bytes)
         crc_quoted = binascii.crc32(header_bytes)
