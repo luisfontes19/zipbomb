@@ -680,7 +680,7 @@ def write_zip_quoted_overlap(f, num_files, compressed_size=None, max_uncompresse
         files.insert(0, FileRecord(header, b"", next_file.crc_matrix))
 
     for header, data in reversed(template):
-        files.insert(0, FileRecord(header, data))
+        files.insert(0, FileRecord(header, data, precompute_crc_matrix(data)))
 
     central_directory = []
     offset = 0
